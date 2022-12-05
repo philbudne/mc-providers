@@ -7,4 +7,5 @@ setup(name='mc-providers',
       author_email='nano3.14@gmail.com',
       packages=['mcproviders',
                'mcproviders.language'],
+      package_data={'mcproviders':["language/lid.176.bin"]},
      )
