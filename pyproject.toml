@@ -26,3 +26,6 @@ dependencies = [
     "wayback-news-search == 1.0.*",
     "fasttext == 0.9.*"
 ]
+
+[tool.flit.sdist]
+include = ["mc_providers/*.py","mc_providers/language/*.py", "mc_providers/language/*.bin" ]

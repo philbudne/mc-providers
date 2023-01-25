@@ -1,18 +1,20 @@
 import datetime as dt
 import requests
-import dateparser
 from typing import List, Dict
 import logging
 
 from .provider import ContentProvider
 from .exceptions import UnsupportedOperationException
-#from util.cache import cache_by_kwargs
+from .cache import CachingManager
 from .language import top_detected
 
 TWITTER_API_URL = 'https://api.twitter.com/2/'
-
+TWITTER_DATE_FORMAT = '%Y-%m-%dT%H:%M:%S.%f%z'
 
 class TwitterTwitterProvider(ContentProvider):
+    """
+    All these endpoints accept a `usernames: List[str]` keyword arg.
+    """
 
     def __init__(self, bearer_token=None):
         super(TwitterTwitterProvider, self).__init__()
@@ -32,7 +34,7 @@ class TwitterTwitterProvider(ContentProvider):
         """
         # sample of historical tweets
         params = {
-            "query": query,
+            "query": self._assembled_query_str(query, **kwargs),
             "max_results": limit,
             "start_time": start_date.isoformat("T") + "Z",
             "end_time": self._fix_end_date(end_date).isoformat("T") + "Z",
@@ -41,6 +43,21 @@ class TwitterTwitterProvider(ContentProvider):
         }
         results = self._cached_query("tweets/search/all", params)
         return TwitterTwitterProvider._tweets_to_rows(results)
+
+    @classmethod
+    def _assembled_query_str(cls, query: str, **kwargs) -> str:
+        usernames = kwargs.get('usernames', [])
+        # need to put all those filters in single query string
+        if len(usernames) == 0:
+            assembled_query = query
+        else:
+            assembled_query = query + " (" + " OR ".join(["from:{}".format(name) for name in usernames]) + ")"
+        # check if query too long
+        # @see https://developer.twitter.com/en/docs/twitter-api/tweets/search/api-reference/get-tweets-search-all
+        if len(assembled_query) > 1024:
+            raise RuntimeError("Twitter's max query length is 1024 characters - your query is {} characters. "
+                               "Try changing collections.".format(len(assembled_query)))
+        return assembled_query
 
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
         results = self.count_over_time(query, start_date, end_date, **kwargs)  # use the cached counts being made already
@@ -59,7 +76,7 @@ class TwitterTwitterProvider(ContentProvider):
         :return:
         """
         params = dict(
-            query=query,
+            query=self._assembled_query_str(query, **kwargs),
             granularity='day',
             start_time=start_date.isoformat("T") + "Z",
             end_time=self._fix_end_date(end_date).isoformat("T") + "Z",
@@ -80,25 +97,27 @@ class TwitterTwitterProvider(ContentProvider):
         to_return = []
         for d in data:
             to_return.append({
-                'date': dateparser.parse(d['start']),
-                'timestamp': dateparser.parse(d['start']).timestamp(),
+                'date': dt.datetime.strptime(d['start'], TWITTER_DATE_FORMAT),
+                'timestamp': dt.datetime.strptime(d['start'], TWITTER_DATE_FORMAT).timestamp(),
                 'count': d['tweet_count'],
             })
         return {'counts': to_return}
 
     def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 500,
                   **kwargs):
+        limit = kwargs['limit'] if 'limit' in kwargs else None
         next_token = None
         more_data = True
         params = {
-            "query": query,
+            "query": self._assembled_query_str(query, **kwargs),
             "max_results": page_size,
             "start_time": start_date.isoformat("T") + "Z",
             "end_time": self._fix_end_date(end_date).isoformat("T") + "Z",
             "tweet.fields": ",".join(["author_id", "created_at", "public_metrics"]),
             "expansions": "author_id",
         }
-        while more_data:
+        item_count = 0
+        while more_data and ((limit is not None) and (item_count < limit)):
             params['next_token'] = next_token
             results = self._cached_query("tweets/search/all", params)
             result_count = results['meta']['result_count']
@@ -107,10 +126,20 @@ class TwitterTwitterProvider(ContentProvider):
                 continue
             page = TwitterTwitterProvider._tweets_to_rows(results)
             yield page
+            item_count += len(page)
             next_token = results['meta']['next_token'] if 'next_token' in results['meta'] else None
             more_data = next_token is not None
 
-    #@cache_by_kwargs()
+    def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10, **kwargs) -> List[Dict]:
+        # use the helper because we need to sample from most recent tweets
+        return self._sampled_languages(query, start_date, end_date, limit, **kwargs)
+
+    def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
+              **kwargs) -> List[Dict]:
+        # use the helper because we need to sample from most recent tweets
+        return self._sampled_title_words(query, start_date, end_date, limit, **kwargs)
+
+    @CachingManager.cache()
     def _cached_query(self, endpoint: str, params: Dict = None) -> Dict:
         """
         Run a generic query agains the Twitter historical search API
@@ -124,10 +153,17 @@ class TwitterTwitterProvider(ContentProvider):
             'Authorization': "Bearer {}".format(self._bearer_token)
         }
         r = self._session.get(TWITTER_API_URL+endpoint, headers=headers, params=params)
+        if r.status_code != 200:
+            try:
+                raise RuntimeError(r.json()['title'])
+            except:
+                raise RuntimeError(f"Error code {r.status_code}")
         return r.json()
 
     @classmethod
     def _add_author_to_tweets(cls, results: Dict) -> None:
+        if cls._no_results(results):
+            return
         user_id_lookup = {u['id']: u for u in results['includes']['users']}
         for t in results['data']:
             t['author'] = user_id_lookup[t['author_id']]
@@ -135,7 +171,15 @@ class TwitterTwitterProvider(ContentProvider):
     @classmethod
     def _tweets_to_rows(cls, results: Dict) -> List:
         TwitterTwitterProvider._add_author_to_tweets(results)
+        if cls._no_results(results):
+            return []
         return [TwitterTwitterProvider._tweet_to_row(t) for t in results['data']]
+
+
+    @classmethod
+    def _no_results(self, results):
+        return results['meta']['result_count'] == 0
+
 
     @classmethod
     def _tweet_to_row(cls, item: Dict) -> Dict:
@@ -145,9 +189,9 @@ class TwitterTwitterProvider(ContentProvider):
             'media_url': 'https://twitter.com/{}'.format(item['author']['username']),
             'id': item['id'],
             'title': item['text'],
-            'publish_date': dateparser.parse(item['created_at']),
+            'publish_date': dt.datetime.strptime(item['created_at'], TWITTER_DATE_FORMAT),
             'url': link,
-            'last_updated': dateparser.parse(item['created_at']),
+            'last_updated': dt.datetime.strptime(item['created_at'], TWITTER_DATE_FORMAT),
             'author': item['author']['name'],
             'language': top_detected(item['text']),  # guess the language cause Twitter oddly doesn't
             'retweet_count': item['public_metrics']['retweet_count'],

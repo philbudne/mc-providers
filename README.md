@@ -8,3 +8,10 @@ Install with pip and the install script.
 
 Requires environment variables set for various interfaces to work correctly.
 
+
+### Build
+
+
+1. Run `flit build` to create an installation package
+2. Run `twine upload --repository-url https://test.pypi.org/legacy/ dist/*` to upload it to PyPI's test platform
+3. Run `twine upload dist/*` to upload it to PyPI
