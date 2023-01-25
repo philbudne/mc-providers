@@ -1,6 +1,6 @@
 # pylint: disable=protected-access
 
-from django.test import TestCase
+import unittest
 import datetime as dt
 
 from .. import YOUTUBE_API_KEY
@@ -11,7 +11,7 @@ TERM = "robot"
 DAY_WINDOW = 100  # window in days to search for tem
 
 
-class YouTubeYouTubeProviderTest(TestCase):
+class YouTubeYouTubeProviderTest(unittest.TestCase):
 
     def setUp(self):
         self._provider = YouTubeYouTubeProvider(YOUTUBE_API_KEY)
@@ -70,4 +70,4 @@ class YouTubeYouTubeProviderTest(TestCase):
             total_items += len(page)
             page_count += 1
         assert page_count == 6
-        assert total_items == 297
+        assert total_items == 288

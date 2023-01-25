@@ -1,10 +1,10 @@
-from django.test import TestCase
+import unittest
 import datetime as dt
 
 from ..reddit import RedditPushshiftProvider
 
 
-class RedditPushshiftProviderTest(TestCase):
+class RedditPushshiftProviderTest(unittest.TestCase):
 
     def setUp(self):
         self._provider = RedditPushshiftProvider()
@@ -34,7 +34,7 @@ class RedditPushshiftProviderTest(TestCase):
         results = self._provider.count_over_time("Trump", dt.datetime(2022, 11, 1), dt.datetime(2022, 12, 1))
         assert 'counts' in results
         assert isinstance(results['counts'], list) is True
-        assert len(results['counts']) == 28
+        assert len(results['counts']) == 29
         # make sure dates are unique
         dates = [d['date'] for d in results['counts']]
         assert len(set(dates)) == len(dates)

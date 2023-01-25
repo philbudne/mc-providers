@@ -1,11 +1,11 @@
-from django.test import TestCase
+import unittest
 
 from ..onlinenews import OnlineNewsWaybackMachineProvider
 
 import datetime as dt
 
 
-class OnlineNewsWaybackMachineProviderTest(TestCase):
+class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
 
     def setUp(self):
         self._provider = OnlineNewsWaybackMachineProvider()
@@ -126,10 +126,12 @@ class OnlineNewsWaybackMachineProviderTest(TestCase):
         last_count = 99999999999
         last_ratio = 1
         assert len(results) > 0
+        print(results)
         for item in results:
+            print(item)
             assert len(item['language']) == 2
-            assert last_count >= item['count']
-            last_count = item['count']
+            assert last_count >= item['value']
+            last_count = item['value']
             assert last_ratio >= item['ratio']
             last_ratio = item['ratio']
 

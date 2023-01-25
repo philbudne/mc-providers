@@ -1,4 +1,4 @@
-from django.test import TestCase
+import unittest
 import datetime as dt
 
 from .. import TWITTER_API_BEARER_TOKEN
@@ -7,7 +7,7 @@ from ..twitter import TwitterTwitterProvider
 TERM = "robots"
 
 
-class TwitterTwitterProviderTest(TestCase):
+class TwitterTwitterProviderTest(unittest.TestCase):
 
     def setUp(self):
         self._provider = TwitterTwitterProvider(TWITTER_API_BEARER_TOKEN)
