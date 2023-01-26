@@ -4,6 +4,7 @@ import dateparser
 import logging
 import numpy as np
 from waybacknews.searchapi import SearchApiClient
+from collections import Counter
 from .language import stopwords_for_language
 from .provider import ContentProvider
 from .cache import CachingManager
@@ -57,9 +58,15 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
     @CachingManager.cache()
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
               **kwargs) -> List[Dict]:
-        assembled_query = self._assembled_query_str(query, **kwargs)
-        # first figure out the dominant languages, so we can remove appropriate stopwords
-        top_languages = self.languages(assembled_query, start_date, end_date, limit=100, **kwargs)
+        
+        chunked_queries = self._assemble_and_chunk_query_str(query, **kwargs)
+        
+        
+        # first figure out the dominant languages, so we can remove appropriate stopwords.
+        # This method does chunking for you, so just pass the query 
+        top_languages = self.languages(query, start_date, end_date, limit=100, **kwargs) 
+        
+        
         represented_languages = [i['language'] for i in top_languages if i['ratio'] > 0.1]
         stopwords = []
         for lang in represented_languages:
@@ -67,10 +74,19 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
                 stopwords += stopwords_for_language(lang)
             except RuntimeError:
                 pass  # not stopwords for language, just let them all pass through
+            
         # for now just return top terms in article titles
         sample_size = 5000
-        results = self._client.terms(assembled_query, start_date, end_date,
+        
+        #An accumulator for the subqueries
+        results_counter = Counter({})
+        for subquery in chunked_queries:
+            this_results = self._client.terms(subquery, start_date, end_date,
                                      self._client.TERM_FIELD_TITLE, self._client.TERM_AGGREGATION_TOP)
+            results_counter += Counter(this_results)
+        
+        results = dict(results_counter)
+            
         # and clean up results to return
         top_terms = [dict(term=t.lower(), count=c, ratio=c/sample_size) for t, c in results.items()
                      if t.lower() not in stopwords]
@@ -80,9 +96,17 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
     @CachingManager.cache()
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
                   **kwargs) -> List[Dict]:
-        assembled_query = self._assembled_query_str(query, **kwargs)
-        matching_count = self.count(assembled_query, start_date, end_date, **kwargs)
-        top_languages = self._client.top_languages(assembled_query, start_date, end_date, **kwargs)
+        
+        chunked_queries = self._assemble_and_chunk_query_str(query, **kwargs)
+        matching_count = 0
+        top_languages = []
+        
+        for subquery in chunked_queries:
+            this_count = self.count(subquery, start_date, end_date, **kwargs)
+            this_languages = self._client.top_languages(subquery, start_date, end_date, **kwargs)
+            matching_count += this_count
+            top_languages.extend(this_languages)
+            
         for item in top_languages:
             item['ratio'] = item['value'] / matching_count
             item['language'] = item['name']
@@ -92,8 +116,12 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
     #Chunk
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                 **kwargs) -> List[Dict]:
-        results = self._client.top_sources(self._assembled_query_str(query, **kwargs), start_date, end_date)
-        cleaned_sources = [dict(source=t['name'], count=t['value']) for t in results]
+        chunked_queries = self._assemble_and_chunk_query_str(query, **kwargs)
+        all_results = []
+        for subquery in chunked_queries:
+            results = self._client.top_sources(subquery, start_date, end_date)
+            all_results.extend(results)
+        cleaned_sources = [dict(source=t['name'], count=t['value']) for t in all_results]
         return cleaned_sources
 
     @classmethod
