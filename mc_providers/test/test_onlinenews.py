@@ -3,6 +3,7 @@ import unittest
 from ..onlinenews import OnlineNewsWaybackMachineProvider
 
 import datetime as dt
+import itertools
 
 
 class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
@@ -134,6 +135,22 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
             last_count = item['value']
             assert last_ratio >= item['ratio']
             last_ratio = item['ratio']
+            
+    def test_chunk_large_query(self):
+        base_query = "test OR base OR query"
+        parts = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+        
+        for combination_length, expected_chunks in [(1, 1),(2, 1), (3, 16), (4, 256)]:
+            #yeilds lists of strings of len 52, 1326, 22100, 270725 respectively
+            test_domains = ["".join(com) for com in itertools.combinations(parts, combination_length)]
+            
+            chunked = self._provider._assemble_and_chunk_query_str(base_query, domains = test_domains)
+            #Assert that we get the expected number of chunks for the combination size
+            assert len(chunked) == expected_chunks
+            #And, more importantly, assert that all the resulting chunks are shorter than the max length
+            assert all([len(q) < self._provider.MAX_QUERY_LENGTH for q in chunked])
+        
+        
 
 '''
     def test_top_tlds(self):

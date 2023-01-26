@@ -2,6 +2,7 @@ import datetime as dt
 from typing import List, Dict
 import dateparser
 import logging
+import numpy as np
 from waybacknews.searchapi import SearchApiClient
 from .language import stopwords_for_language
 from .provider import ContentProvider
@@ -14,7 +15,8 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
     """
 
     DEFAULT_COLLECTION = "mediacloud"
-
+    MAX_QUERY_LENGTH = pow(2, 14)
+    
     def __init__(self):
         super(OnlineNewsWaybackMachineProvider, self).__init__()
         self._client = SearchApiClient(self.DEFAULT_COLLECTION)
@@ -23,6 +25,7 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
     def everything_query(self) -> str:
         return '*'
 
+    #Chunk
     @CachingManager.cache()
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
                **kwargs) -> List[Dict]:
@@ -30,15 +33,18 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
         print(results)
         return self._matches_to_rows(results)
 
+    #Chunk
     @CachingManager.cache()
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
         return self._client.count(self._assembled_query_str(query, **kwargs), start_date, end_date, **kwargs)
 
+    #Chunk
     @CachingManager.cache()
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
         results = self._client.count_over_time(self._assembled_query_str(query, **kwargs), start_date, end_date, **kwargs)
         return {'counts': results}
 
+    #Chunk
     @CachingManager.cache()
     def item(self, item_id: str) -> Dict:
         return self._client.article(item_id)
@@ -47,6 +53,7 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
         for page in self._client.all_articles(self._assembled_query_str(query, **kwargs), start_date, end_date, **kwargs):
             yield self._matches_to_rows(page)
 
+    #Chunk
     @CachingManager.cache()
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
               **kwargs) -> List[Dict]:
@@ -69,6 +76,7 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
                      if t.lower() not in stopwords]
         return top_terms
 
+    #Chunk
     @CachingManager.cache()
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
                   **kwargs) -> List[Dict]:
@@ -81,12 +89,39 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
             del item['name']
         return top_languages[:limit]
 
+    #Chunk
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                 **kwargs) -> List[Dict]:
         results = self._client.top_sources(self._assembled_query_str(query, **kwargs), start_date, end_date)
         cleaned_sources = [dict(source=t['name'], count=t['value']) for t in results]
         return cleaned_sources
 
+    @classmethod
+    def _assemble_and_chunk_query_str(cls, base_query: str, **kwargs) -> List:
+        """
+        If a query string is too long, we can attempt to run it anyway by splitting the domain substring (which is guaranteed 
+        too be only a sequence of ANDs) into parts, to produce multiple smaller queries which are collectively equivalent 
+        to the original. 
+        """
+        domains = kwargs.get('domains', [])
+        if len(base_query) > cls.MAX_QUERY_LENGTH:
+            ##of course there still is the possibility that the base query is too large, which 
+            #cannot be fixed by this method
+            raise RuntimeError(f"Base Query cannot exceed {cls.MAX_QUERY_LENGTH} characters")
+        
+        queries = [cls._assembled_query_str(base_query, domains=domains)]
+        queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in queries])
+        domain_divisor = 2
+        
+        if queries_too_big:
+            while queries_too_big:
+                chunked_domains = np.array_split(domains, domain_divisor)
+                queries = [cls._assembled_query_str(base_query, domains=dom) for dom in chunked_domains]
+                queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in queries])
+                domain_divisor *= 2
+            
+        return queries
+    
     @classmethod
     def _assembled_query_str(cls, query: str, **kwargs) -> str:
         domains = kwargs.get('domains', [])
