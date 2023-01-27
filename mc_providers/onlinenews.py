@@ -50,11 +50,18 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
             count += self._client.count(subquery, start_date, end_date, **kwargs)
         return count
 
-    #Chunk - This is kind of a pain to chunkify- although I think it's possible to do it in a pretty way with collections. 
-    #I'll come back to this later if I have time. 
+    #Chunk'd
     @CachingManager.cache()
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
-        results = self._client.count_over_time(self._assembled_query_str(query, **kwargs), start_date, end_date, **kwargs)
+        
+        counter = Counter()
+        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+            results = self._client.count_over_time(subquery, start_date, end_date, **kwargs)
+            countable = {i['date']:i['count'] for i in results}
+            counter += Counter(countable)
+        
+        counter_dict = dict(counter)
+        results = [{"date":date, "timestamp":date.timestamp(), "count":count} for date, count in counter_dict.items()]
         return {'counts': results}
 
     
