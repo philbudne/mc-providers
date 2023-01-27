@@ -15,6 +15,8 @@ class TwitterTwitterProvider(ContentProvider):
     """
     All these endpoints accept a `usernames: List[str]` keyword arg.
     """
+    
+    MAX_QUERY_LENGTH = 1024 #I think?
 
     def __init__(self, bearer_token=None):
         super(TwitterTwitterProvider, self).__init__()
@@ -22,6 +24,7 @@ class TwitterTwitterProvider(ContentProvider):
         self._bearer_token = bearer_token
         self._session = requests.Session()  # better performance to put all HTTP through this one object
 
+    #Chunk
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10, **kwargs) -> List[Dict]:
         """
         Return a list of historical tweets matching the query.
@@ -59,11 +62,41 @@ class TwitterTwitterProvider(ContentProvider):
                                "Try changing collections.".format(len(assembled_query)))
         return assembled_query
 
+    
+    @classmethod
+    def _assemble_and_chunk_query_str(cls, base_query: str, **kwargs) -> List:
+        """
+        If a query string is too long, we can attempt to run it anyway by splitting the domain substring (which is guaranteed 
+        too be only a sequence of ANDs) into parts, to produce multiple smaller queries which are collectively equivalent 
+        to the original. 
+        """
+        usernames = kwargs.get('usernames', [])
+        
+        if len(base_query) > cls.MAX_QUERY_LENGTH:
+            ##of course there still is the possibility that the base query is too large, which 
+            #cannot be fixed by this method
+            raise RuntimeError(f"Base Query cannot exceed {cls.MAX_QUERY_LENGTH} characters")
+        
+        queries = [cls._assembled_query_str(base_query, usernames=usernames)]
+        queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in queries])
+        username_divisor = 2
+        
+        if queries_too_big:
+            while queries_too_big:
+                chunked_users = np.array_split(usernames, username_divisor)
+                queries = [cls._assembled_query_str(base_query, usernames=users) for users in chunked_users]
+                queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in queries])
+                username_divisor *= 2
+            
+        return queries
+    
+    #No need to chunk
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
         results = self.count_over_time(query, start_date, end_date, **kwargs)  # use the cached counts being made already
         total = sum([r['count'] for r in results['counts']])
         return total
-
+    
+    #Chunk
     def count_over_time(self, query: str, start_date: dt.datetime,
                         end_date: dt.datetime,
                         **kwargs) -> Dict:
@@ -103,6 +136,7 @@ class TwitterTwitterProvider(ContentProvider):
             })
         return {'counts': to_return}
 
+    #Chunk
     def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 500,
                   **kwargs):
         limit = kwargs['limit'] if 'limit' in kwargs else None
@@ -129,11 +163,13 @@ class TwitterTwitterProvider(ContentProvider):
             item_count += len(page)
             next_token = results['meta']['next_token'] if 'next_token' in results['meta'] else None
             more_data = next_token is not None
-
+    
+    #Hmmm... how to chunk this?
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10, **kwargs) -> List[Dict]:
         # use the helper because we need to sample from most recent tweets
         return self._sampled_languages(query, start_date, end_date, limit, **kwargs)
-
+    
+    #Hmmm same as above-
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
               **kwargs) -> List[Dict]:
         # use the helper because we need to sample from most recent tweets

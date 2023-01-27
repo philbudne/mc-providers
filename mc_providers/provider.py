@@ -83,6 +83,7 @@ class ContentProvider(ABC):
         """
         return '*'
 
+    #Chunk??
     # use this if you need to sample some content for top languages
     def _sampled_languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
                                **kwargs) -> List[Dict]:
@@ -98,6 +99,7 @@ class ContentProvider(ABC):
         results = [dict(language=w, count=c, ratio=c/sampled_count) for w, c in counts.most_common()]
         return results[:limit]
 
+    #Chunk??
     # use this if you need to sample some content for top words
     def _sampled_title_words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                              **kwargs) -> List[Dict]:
