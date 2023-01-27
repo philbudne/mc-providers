@@ -19,6 +19,7 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
     DEFAULT_COLLECTION = "mediacloud"
     MAX_QUERY_LENGTH = pow(2, 14)
     
+    
     def __init__(self):
         super(OnlineNewsWaybackMachineProvider, self).__init__()
         self._client = SearchApiClient(self.DEFAULT_COLLECTION)
@@ -34,7 +35,7 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
                **kwargs) -> List[Dict]:
         results = []
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
-            this_results = self._client.sample(self._assembled_query_str(query, **kwargs), start_date, end_date, **kwargs)
+            this_results = self._client.sample(subquery, start_date, end_date, **kwargs)
             results.extend(this_results)
         
         if(len(results) > limit):
@@ -62,7 +63,9 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
         
         counter_dict = dict(counter)
         results = [{"date":date, "timestamp":date.timestamp(), "count":count} for date, count in counter_dict.items()]
-        return {'counts': results}
+        #Somehow the order of this list gets out of wack. Sorting before returning for the sake of testability
+        sorted_results = sorted(results, key = lambda x: x["timestamp"]) 
+        return {'counts': sorted_results}
 
     
     @CachingManager.cache()
@@ -104,13 +107,16 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
         for subquery in chunked_queries:
             this_results = self._client.terms(subquery, start_date, end_date,
                                      self._client.TERM_FIELD_TITLE, self._client.TERM_AGGREGATION_TOP)
-            results_counter += Counter(this_results)
+            
+            if "detail" not in this_results:
+                results_counter += Counter(this_results)
         
         results = dict(results_counter)
             
         # and clean up results to return
         top_terms = [dict(term=t.lower(), count=c, ratio=c/sample_size) for t, c in results.items()
                      if t.lower() not in stopwords]
+        top_terms = sorted(top_terms, key=lambda x:x["count"], reverse=True)
         return top_terms
 
     #Chunk'd
@@ -119,29 +125,42 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
                   **kwargs) -> List[Dict]:
         
         matching_count = self.count(query, start_date, end_date, **kwargs)
-        top_languages = []
         
+        
+        results_counter = Counter({})
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs) :   
             this_languages = self._client.top_languages(subquery, start_date, end_date, **kwargs)
-            top_languages.extend(this_languages)
-            
+            countable = {item["name"]:item["value"] for item in this_languages}
+            results_counter += Counter(countable)
+            #top_languages.extend(this_languages)
+        
+        all_results = dict(results_counter)
+        
+        top_languages = [{'language':name, 'value':value} for name, value in all_results.items()]
+        
         for item in top_languages:
             item['ratio'] = item['value'] / matching_count
-            item['language'] = item['name']
-            del item['name']
+        
+        #Sort by count, then alphabetically
+        top_languages = sorted(top_languages, key=lambda x:x['value'], reverse=True)
         return top_languages[:limit]
 
     #Chunk'd
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                 **kwargs) -> List[Dict]:
         
-        all_results = []
+        #all_results = []
         
+        results_counter = Counter({})
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
             results = self._client.top_sources(subquery, start_date, end_date)
-            all_results.extend(results)
-            
-        cleaned_sources = [dict(source=t['name'], count=t['value']) for t in all_results]
+            countable = {source['name']:source['value'] for source in results}
+            results_counter += Counter(countable)
+            #all_results.extend(results)
+        
+        all_results = dict(results_counter)
+        cleaned_sources = [{"source":source , "count":count} for source, count in all_results.items()]
+        cleaned_sources = sorted(cleaned_sources, key= lambda x: x['count'], reverse=True)
         return cleaned_sources
 
     @classmethod
@@ -152,6 +171,9 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
         to the original. 
         """
         domains = kwargs.get('domains', [])
+        
+        
+        
         if len(base_query) > cls.MAX_QUERY_LENGTH:
             ##of course there still is the possibility that the base query is too large, which 
             #cannot be fixed by this method
