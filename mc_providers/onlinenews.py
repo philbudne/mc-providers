@@ -3,6 +3,7 @@ from typing import List, Dict
 import dateparser
 import logging
 import numpy as np
+import random
 from waybacknews.searchapi import SearchApiClient
 from collections import Counter
 from .language import stopwords_for_language
@@ -26,35 +27,55 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
     def everything_query(self) -> str:
         return '*'
 
-    #Chunk
+    #Chunk'd
+    #NB: it looks like the limit keyword here doesn't ever get passed into the query- something's missing here. 
     @CachingManager.cache()
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
                **kwargs) -> List[Dict]:
-        results = self._client.sample(self._assembled_query_str(query, **kwargs), start_date, end_date, **kwargs)
-        print(results)
+        results = []
+        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+            this_results = self._client.sample(self._assembled_query_str(query, **kwargs), start_date, end_date, **kwargs)
+            results.extend(this_results)
+        
+        if(len(results) > limit):
+            results = random.sample(results, limit)
+            
         return self._matches_to_rows(results)
 
-    #Chunk
+    #Chunk'd
     @CachingManager.cache()
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
-        return self._client.count(self._assembled_query_str(query, **kwargs), start_date, end_date, **kwargs)
+        count = 0
+        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+            count += self._client.count(subquery, start_date, end_date, **kwargs)
+        return count
 
-    #Chunk
+    #Chunk'd
     @CachingManager.cache()
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
-        results = self._client.count_over_time(self._assembled_query_str(query, **kwargs), start_date, end_date, **kwargs)
+        
+        counter = Counter()
+        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+            results = self._client.count_over_time(subquery, start_date, end_date, **kwargs)
+            countable = {i['date']:i['count'] for i in results}
+            counter += Counter(countable)
+        
+        counter_dict = dict(counter)
+        results = [{"date":date, "timestamp":date.timestamp(), "count":count} for date, count in counter_dict.items()]
         return {'counts': results}
 
-    #Chunk
+    
     @CachingManager.cache()
     def item(self, item_id: str) -> Dict:
         return self._client.article(item_id)
-
+    
+    #Chunk'd
     def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs):
-        for page in self._client.all_articles(self._assembled_query_str(query, **kwargs), start_date, end_date, **kwargs):
-            yield self._matches_to_rows(page)
+        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+            for page in self._client.all_articles(subquery, start_date, end_date, **kwargs):
+                yield self._matches_to_rows(page)
 
-    #Chunk
+    #Chunk'd
     @CachingManager.cache()
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
               **kwargs) -> List[Dict]:
@@ -92,19 +113,16 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
                      if t.lower() not in stopwords]
         return top_terms
 
-    #Chunk
+    #Chunk'd
     @CachingManager.cache()
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
                   **kwargs) -> List[Dict]:
         
-        chunked_queries = self._assemble_and_chunk_query_str(query, **kwargs)
-        matching_count = 0
+        matching_count = self.count(query, start_date, end_date, **kwargs)
         top_languages = []
         
-        for subquery in chunked_queries:
-            this_count = self.count(subquery, start_date, end_date, **kwargs)
+        for subquery in self._assemble_and_chunk_query_str(query, **kwargs) :   
             this_languages = self._client.top_languages(subquery, start_date, end_date, **kwargs)
-            matching_count += this_count
             top_languages.extend(this_languages)
             
         for item in top_languages:
@@ -113,14 +131,16 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
             del item['name']
         return top_languages[:limit]
 
-    #Chunk
+    #Chunk'd
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                 **kwargs) -> List[Dict]:
-        chunked_queries = self._assemble_and_chunk_query_str(query, **kwargs)
+        
         all_results = []
-        for subquery in chunked_queries:
+        
+        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
             results = self._client.top_sources(subquery, start_date, end_date)
             all_results.extend(results)
+            
         cleaned_sources = [dict(source=t['name'], count=t['value']) for t in all_results]
         return cleaned_sources
 
