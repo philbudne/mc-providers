@@ -19,7 +19,7 @@ Requires environment variables set for various interfaces to work correctly.
 
 
 ### Version History
-
+* __v0.1.3__ - Added Query Chunking for large queries in the onlinenews provider
 * __v0.1.2__ - Test Completeness
 * __v0.1.1__ - Pairity with web-search module, and language model.
 * __v0.1.0__ - Initial pypi upload. 
