@@ -2,6 +2,8 @@ import datetime as dt
 import requests
 from typing import List, Dict
 import logging
+import random
+from collections import Counter
 
 from .provider import ContentProvider
 from .exceptions import UnsupportedOperationException
@@ -24,7 +26,7 @@ class TwitterTwitterProvider(ContentProvider):
         self._bearer_token = bearer_token
         self._session = requests.Session()  # better performance to put all HTTP through this one object
 
-    #Chunk
+    #Chunk'd
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10, **kwargs) -> List[Dict]:
         """
         Return a list of historical tweets matching the query.
@@ -36,16 +38,22 @@ class TwitterTwitterProvider(ContentProvider):
         :return:
         """
         # sample of historical tweets
-        params = {
-            "query": self._assembled_query_str(query, **kwargs),
-            "max_results": limit,
-            "start_time": start_date.isoformat("T") + "Z",
-            "end_time": self._fix_end_date(end_date).isoformat("T") + "Z",
-            "tweet.fields": ",".join(["author_id", "created_at", "public_metrics"]),
-            "expansions": "author_id",
-        }
-        results = self._cached_query("tweets/search/all", params)
-        return TwitterTwitterProvider._tweets_to_rows(results)
+        all_results = []
+        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+            params = {
+                "query": self._assembled_query_str(query, **kwargs),
+                "max_results": limit,
+                "start_time": start_date.isoformat("T") + "Z",
+                "end_time": self._fix_end_date(end_date).isoformat("T") + "Z",
+                "tweet.fields": ",".join(["author_id", "created_at", "public_metrics"]),
+                "expansions": "author_id",
+            }
+            results = self._cached_query("tweets/search/all", params)
+            results = TwitterTwitterProvider._tweets_to_rows(results)
+            all_results.extend(results)
+           
+        results = random.sample(all_results, limit) 
+        return results
 
     @classmethod
     def _assembled_query_str(cls, query: str, **kwargs) -> str:
@@ -108,68 +116,81 @@ class TwitterTwitterProvider(ContentProvider):
         :param kwargs:
         :return:
         """
-        params = dict(
-            query=self._assembled_query_str(query, **kwargs),
-            granularity='day',
-            start_time=start_date.isoformat("T") + "Z",
-            end_time=self._fix_end_date(end_date).isoformat("T") + "Z",
-        )
-        more_data = True
-        next_token = None
-        data = []
-        while more_data:
-            params['next_token'] = next_token
-            results = self._cached_query("tweets/counts/all", params)
-            data += reversed(results['data'])
-            if ('meta' in results) and ('next_token' in results['meta']):
-                next_token = results['meta']['next_token']
-                more_data = True
-            else:
-                next_token = None
-                more_data = False
+        counter = Counter()
+
+        for subquery in  self._assemble_and_chunk_query_str(query, **kwargs):
+            print(subquery)
+            params = dict(
+                query=subquery,
+                granularity='day',
+                start_time=start_date.isoformat("T") + "Z",
+                end_time=self._fix_end_date(end_date).isoformat("T") + "Z",
+            )
+            more_data = True
+            next_token = None
+            data = []
+            while more_data:
+                params['next_token'] = next_token
+                results = self._cached_query("tweets/counts/all", params)
+                data += reversed(results['data'])
+                if ('meta' in results) and ('next_token' in results['meta']):
+                    next_token = results['meta']['next_token']
+                    more_data = True
+                else:
+                    next_token = None
+                    more_data = False
+            print(data)
+            countable = {i["start"]:i["tweet_count"] for i in data}
+            counter += Counter(countable)
+                
+        data = dict(counter)
+        
         to_return = []
-        for d in data:
+        for date, count in data.items():
             to_return.append({
-                'date': dt.datetime.strptime(d['start'], TWITTER_DATE_FORMAT),
-                'timestamp': dt.datetime.strptime(d['start'], TWITTER_DATE_FORMAT).timestamp(),
-                'count': d['tweet_count'],
+                'date': dt.datetime.strptime(date, TWITTER_DATE_FORMAT),
+                'timestamp': dt.datetime.strptime(date, TWITTER_DATE_FORMAT).timestamp(),
+                'count': count,
             })
         return {'counts': to_return}
 
-    #Chunk
+    #Chunk'd
     def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 500,
                   **kwargs):
-        limit = kwargs['limit'] if 'limit' in kwargs else None
-        next_token = None
-        more_data = True
-        params = {
-            "query": self._assembled_query_str(query, **kwargs),
-            "max_results": page_size,
-            "start_time": start_date.isoformat("T") + "Z",
-            "end_time": self._fix_end_date(end_date).isoformat("T") + "Z",
-            "tweet.fields": ",".join(["author_id", "created_at", "public_metrics"]),
-            "expansions": "author_id",
-        }
-        item_count = 0
-        while more_data and ((limit is not None) and (item_count < limit)):
-            params['next_token'] = next_token
-            results = self._cached_query("tweets/search/all", params)
-            result_count = results['meta']['result_count']
-            if result_count == 0:
-                more_data = False
-                continue
-            page = TwitterTwitterProvider._tweets_to_rows(results)
-            yield page
-            item_count += len(page)
-            next_token = results['meta']['next_token'] if 'next_token' in results['meta'] else None
-            more_data = next_token is not None
+        
+        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+            
+            limit = kwargs['limit'] if 'limit' in kwargs else None
+            next_token = None
+            more_data = True
+            params = {
+                "query": subquery,
+                "max_results": page_size,
+                "start_time": start_date.isoformat("T") + "Z",
+                "end_time": self._fix_end_date(end_date).isoformat("T") + "Z",
+                "tweet.fields": ",".join(["author_id", "created_at", "public_metrics"]),
+                "expansions": "author_id",
+            }
+            item_count = 0
+            while more_data and ((limit is not None) and (item_count < limit)):
+                params['next_token'] = next_token
+                results = self._cached_query("tweets/search/all", params)
+                result_count = results['meta']['result_count']
+                if result_count == 0:
+                    more_data = False
+                    continue
+                page = TwitterTwitterProvider._tweets_to_rows(results)
+                yield page
+                item_count += len(page)
+                next_token = results['meta']['next_token'] if 'next_token' in results['meta'] else None
+                more_data = next_token is not None
     
-    #Hmmm... how to chunk this?
+    #sampled_languages just relies on all_items, so if all_items is chunked then we get this for free
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10, **kwargs) -> List[Dict]:
         # use the helper because we need to sample from most recent tweets
         return self._sampled_languages(query, start_date, end_date, limit, **kwargs)
     
-    #Hmmm same as above-
+    #same as languages
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
               **kwargs) -> List[Dict]:
         # use the helper because we need to sample from most recent tweets

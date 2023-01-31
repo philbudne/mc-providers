@@ -70,3 +70,9 @@ class TwitterTwitterProviderTest(unittest.TestCase):
             last_count = item['count']
             assert last_ratio >= item['ratio']
             last_ratio = item['ratio']
+
+    #Test user chunking
+    #test overlarge sample
+    #test overlarge count 
+    #test overlarge count over time
+    #test overlarge all items
