@@ -4,6 +4,8 @@ from typing import List, Dict
 import logging
 import random
 from collections import Counter
+import numpy as np 
+from time import sleep
 
 from .provider import ContentProvider
 from .exceptions import UnsupportedOperationException
@@ -19,7 +21,8 @@ class TwitterTwitterProvider(ContentProvider):
     """
     
     MAX_QUERY_LENGTH = 1024 #I think?
-
+    POLITENESS_DELAY = 1 #sleep for half a second if we're gonna spam a bunch of queries
+    
     def __init__(self, bearer_token=None):
         super(TwitterTwitterProvider, self).__init__()
         self._logger = logging.getLogger(__name__)
@@ -39,9 +42,10 @@ class TwitterTwitterProvider(ContentProvider):
         """
         # sample of historical tweets
         all_results = []
-        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+        chunks = self._assemble_and_chunk_query_str(query, **kwargs)
+        for subquery in chunks:
             params = {
-                "query": self._assembled_query_str(query, **kwargs),
+                "query": subquery,
                 "max_results": limit,
                 "start_time": start_date.isoformat("T") + "Z",
                 "end_time": self._fix_end_date(end_date).isoformat("T") + "Z",
@@ -51,8 +55,12 @@ class TwitterTwitterProvider(ContentProvider):
             results = self._cached_query("tweets/search/all", params)
             results = TwitterTwitterProvider._tweets_to_rows(results)
             all_results.extend(results)
-           
-        results = random.sample(all_results, limit) 
+            if len(chunks) > 1:
+                
+                sleep(self.POLITENESS_DELAY)
+                
+        if len(all_results) > limit:
+            all_results = random.sample(all_results, limit) 
         return results
 
     @classmethod
@@ -65,9 +73,9 @@ class TwitterTwitterProvider(ContentProvider):
             assembled_query = query + " (" + " OR ".join(["from:{}".format(name) for name in usernames]) + ")"
         # check if query too long
         # @see https://developer.twitter.com/en/docs/twitter-api/tweets/search/api-reference/get-tweets-search-all
-        if len(assembled_query) > 1024:
-            raise RuntimeError("Twitter's max query length is 1024 characters - your query is {} characters. "
-                               "Try changing collections.".format(len(assembled_query)))
+        #if len(assembled_query) > 1024:
+        #    raise RuntimeError("Twitter's max query length is 1024 characters - your query is {} characters. "
+        #                       "Try changing collections.".format(len(assembled_query)))
         return assembled_query
 
     
@@ -119,7 +127,7 @@ class TwitterTwitterProvider(ContentProvider):
         counter = Counter()
 
         for subquery in  self._assemble_and_chunk_query_str(query, **kwargs):
-            print(subquery)
+            #print(subquery)
             params = dict(
                 query=subquery,
                 granularity='day',
@@ -139,7 +147,6 @@ class TwitterTwitterProvider(ContentProvider):
                 else:
                     next_token = None
                     more_data = False
-            print(data)
             countable = {i["start"]:i["tweet_count"] for i in data}
             counter += Counter(countable)
                 

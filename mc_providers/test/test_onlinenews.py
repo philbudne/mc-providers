@@ -165,8 +165,8 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
     
     def test_overlarge_language(self):
         base_query = "technology"
-        startdate = dt.datetime(2022, 12,23)
-        enddate = dt.datetime(2023, 1, 22)
+        startdate = dt.datetime(2022, 12,22)
+        enddate = dt.datetime(2023, 1, 23)
         results = self._provider.languages(base_query, startdate, enddate, domains = self.DOMAINS_OVER_LIMIT)
         assert len(results) == 10
         
@@ -182,8 +182,8 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
 
     def test_overlarge_sources(self):
         base_query = "technology"
-        startdate = dt.datetime(2022, 12,23)
-        enddate = dt.datetime(2023, 1, 22)
+        startdate = dt.datetime(2022, 12,22)
+        enddate = dt.datetime(2023, 1, 23)
 
         results = self._provider.sources(base_query, startdate, enddate, domains = self.DOMAINS_OVER_LIMIT)
         assert len(results) == 49
@@ -202,8 +202,8 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
     def test_overlarge_words(self):
         
         base_query = "technology"
-        startdate = dt.datetime(2022, 12,23)
-        enddate = dt.datetime(2023, 1, 22)
+        startdate = dt.datetime(2022, 12,22)
+        enddate = dt.datetime(2023, 1, 23)
 
         results = self._provider.words(base_query, startdate, enddate, domains = self.DOMAINS_OVER_LIMIT)
         assert len(results) > 0
@@ -231,11 +231,11 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
         
     def test_overlarge_count(self):
         base_query = "technology"
-        startdate = dt.datetime(2022, 12,23)
-        enddate = dt.datetime(2023, 1, 22)
+        startdate = dt.datetime(2022, 12,22)
+        enddate = dt.datetime(2023, 1, 23)
 
         results = self._provider.count(base_query, startdate, enddate, domains = self.DOMAINS_OVER_LIMIT)
-        assert results == 13712
+        assert results == 15527
         
         results_shuffled = self._provider.count(base_query, startdate, enddate, domains = self.DOL_SHUFFLED())
         assert results_shuffled == results
@@ -244,8 +244,8 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
     def test_overlarge_sample(self):
         #Not much you can do to test this guy
         base_query = "technology"
-        startdate = dt.datetime(2022, 12,23)
-        enddate = dt.datetime(2023, 1, 22)
+        startdate = dt.datetime(2022, 12,22)
+        enddate = dt.datetime(2023, 1, 23)
 
         results = self._provider.sample(base_query, startdate, enddate, domains = self.DOMAINS_OVER_LIMIT)
         assert len(results) == 20
