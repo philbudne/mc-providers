@@ -191,6 +191,8 @@ class TwitterTwitterProvider(ContentProvider):
                 item_count += len(page)
                 next_token = results['meta']['next_token'] if 'next_token' in results['meta'] else None
                 more_data = next_token is not None
+            
+            sleep(self.POLITENESS_DELAY)
     
     #sampled_languages just relies on all_items, so if all_items is chunked then we get this for free
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10, **kwargs) -> List[Dict]:

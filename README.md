@@ -19,6 +19,7 @@ Requires environment variables set for various interfaces to work correctly.
 
 
 ### Version History
+* __v0.1.5__ - Added politeness wait to all chunked queries in twitter provider
 * __v0.1.4__ - Added Query Chunking for large collections in the Twitter provider
 * __v0.1.3__ - Added Query Chunking for large queries in the onlinenews provider
 * __v0.1.2__ - Test Completeness
