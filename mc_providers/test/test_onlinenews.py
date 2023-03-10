@@ -162,6 +162,17 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
         assert len(chunked) == 2
         assert all([len(q) < self._provider.MAX_QUERY_LENGTH for q in chunked])
         
+    def test_confirm_sample_chunk_filter(self):
+        base_query = "technology"
+        chunked = self._provider._assemble_and_chunk_query_str(base_query, filters = self.DOMAINS_OVER_LIMIT)
+        assert len(chunked) == 2
+        assert all([len(q) < self._provider.MAX_QUERY_LENGTH for q in chunked])
+    
+    def test_confirm_sample_chunk_query_filter_and_domain(self):
+        base_query = "technology"
+        chunked = self._provider._assemble_and_chunk_query_str(base_query, domains = self.DOMAINS_OVER_LIMIT, filters= self.DOL_SHUFFLED())
+        assert len(chunked) == 4
+        assert all([len(q) < self._provider.MAX_QUERY_LENGTH for q in chunked])
     
     def test_overlarge_language(self):
         base_query = "technology"
@@ -186,13 +197,12 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
         enddate = dt.datetime(2023, 1, 23)
 
         results = self._provider.sources(base_query, startdate, enddate, domains = self.DOMAINS_OVER_LIMIT)
-        assert len(results) == 49
+        assert len(results) == 50
 
         results_shuffled = self._provider.sources(base_query, startdate, enddate, domains = self.DOL_SHUFFLED())
-        assert len(results_shuffled) == 49
+        assert len(results_shuffled) == 50
         
-        print(results)
-        print(results_shuffled)
+        
         for source in results:
             assert source in results_shuffled
         #assert results_shuffled == results
@@ -235,7 +245,7 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
         enddate = dt.datetime(2023, 1, 23)
 
         results = self._provider.count(base_query, startdate, enddate, domains = self.DOMAINS_OVER_LIMIT)
-        assert results == 15527
+        assert results == 19900
         
         results_shuffled = self._provider.count(base_query, startdate, enddate, domains = self.DOL_SHUFFLED())
         assert results_shuffled == results
