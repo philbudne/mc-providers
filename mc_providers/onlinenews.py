@@ -164,42 +164,97 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
         return cleaned_sources
 
     @classmethod
-    def _assemble_and_chunk_query_str(cls, base_query: str, **kwargs) -> List:
+    def _assemble_and_chunk_query_str(cls, base_query: str, **kwargs) :
         """
         If a query string is too long, we can attempt to run it anyway by splitting the domain substring (which is guaranteed 
         too be only a sequence of ANDs) into parts, to produce multiple smaller queries which are collectively equivalent 
         to the original. 
+        
+        
+        Because we have this chunking thing implimented, and the filter behavior never interacts with the domain search behavior,
+        we can just put the two different search fields into two different sets of behavior at the top. Theres obvi room to optimize,
+        but this gets the done job.
         """
+        
+        
         domains = kwargs.get('domains', [])
-        
-        
+
+        filters = kwargs.get('filters', [])
         
         if len(base_query) > cls.MAX_QUERY_LENGTH:
             ##of course there still is the possibility that the base query is too large, which 
             #cannot be fixed by this method
             raise RuntimeError(f"Base Query cannot exceed {cls.MAX_QUERY_LENGTH} characters")
         
-        queries = [cls._assembled_query_str(base_query, domains=domains)]
-        queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in queries])
-        domain_divisor = 2
-        
-        if queries_too_big:
-            while queries_too_big:
-                chunked_domains = np.array_split(domains, domain_divisor)
-                queries = [cls._assembled_query_str(base_query, domains=dom) for dom in chunked_domains]
-                queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in queries])
-                domain_divisor *= 2
+
+        #Get Domain Queries
+        domain_queries = []
+        if len(domains) > 0:
+            domain_queries = [cls._assembled_query_str(base_query, domains=domains)]
+            domain_queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in domain_queries])
+
+            domain_divisor = 2
+
+            if domain_queries_too_big:
+                while domain_queries_too_big:
+                    chunked_domains = np.array_split(domains, domain_divisor)
+                    domain_queries = [cls._assembled_query_str(base_query, domains=dom) for dom in chunked_domains]
+                    domain_queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in domain_queries])
+                    domain_divisor *= 2
+                
+        #Then Get Filter Queries
+        filter_queries = []
+        if len(filters) > 0:
+            filter_queries = [cls._assembled_query_str(base_query, filters=filters)]
+            filter_queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in filter_queries])
+
+            filter_divisor = 2
+            if filter_queries_too_big:
+                while filter_queries_too_big:
+                    chunked_filters = np.array_split(filters, filter_divisor)
+                    filter_queries = [cls._assembled_query_str(base_query, filters=filt) for filt in chunked_filters]
+                    filter_queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in filter_queries])
+                    filter_divisor *= 2
             
+        #There's a (probably not uncommon) edge case where we're searching against no collections at all,
+        #so just do it manually here. 
+        if len(domain_queries) == 0 and len(filter_queries) == 0:
+            queries = [cls._assembled_query_str(base_query)]
+        
+        else:
+            queries = domain_queries + filter_queries
+        
+        print(len(queries))
         return queries
     
     @classmethod
     def _assembled_query_str(cls, query: str, **kwargs) -> str:
+        
         domains = kwargs.get('domains', [])
+        domain_clause = ""
+        
+        if len(domains) > 0:
+            domain_clause = " OR ".join(domains)
+        
+        filters = kwargs.get('filters', [])
+        filter_clause = ""
+        
+        if len(filters) > 0:
+            filter_clause = " OR ".join(filters)
+        
         # need to put all those filters in single query string
         q = query
-        if len(domains) > 0:
-            q += " AND (domain:({}))".format(" OR ".join(domains))
+        
+        if( (len(domains) > 0) and (len(filters) > 0) ):
+            q += f" AND (({domain_clause}) OR ({filter_clause}))"
+        
+        elif len(domains) > 0:
+            q += f" AND (domain:({domain_clause}))"
+        
+        elif len(filters) > 0:
+            q += f" AND (domain:({filter_clause}))"
         return q
+
 
     @classmethod
     def _matches_to_rows(cls, matches: List) -> List:
