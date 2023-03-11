@@ -234,8 +234,9 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
         domain_clause = ""
         
         if len(domains) > 0:
-            domain_clause = " OR ".join(domains)
-        
+            domain_string = " OR ".join(domains)
+            domain_clause = f"domain:({domain_string})"
+            
         filters = kwargs.get('filters', [])
         filter_clause = ""
         
@@ -249,10 +250,10 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
             q += f" AND (({domain_clause}) OR ({filter_clause}))"
         
         elif len(domains) > 0:
-            q += f" AND (domain:({domain_clause}))"
+            q += f" AND ({domain_clause})"
         
         elif len(filters) > 0:
-            q += f" AND (domain:({filter_clause}))"
+            q += f" AND ({filter_clause})"
         return q
 
 
