@@ -1,6 +1,6 @@
 [project]
 name = "mc-providers"
-version = "0.1.7"
+version = "0.2.0"
 authors = [
     {name = "Paige Gulley", email = "nano3.14@gmail.com"},
 ]
@@ -22,7 +22,9 @@ dependencies = [
     "dateparser == 1.1.*",
     "requests",
     "wayback-news-search == 1.0.*",
-    "fasttext == 0.9.*"
+    "fasttext == 0.9.*",
+    "mediacloud-metadata",
+    "mediacloud == 3.*",  # need to use prior version to query the legacy api
 ]
 
 [tool.flit.sdist]
