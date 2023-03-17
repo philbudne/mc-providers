@@ -15,11 +15,14 @@ Requires environment variables set for various interfaces to work correctly.
 
 Make sure `pip install flit twine` so you can build and deploy to PyPI.
 
-1. Run `flit build` to create an installation package
-2. Run `twine upload --repository-url https://test.pypi.org/legacy/ dist/*` to upload it to PyPI's test platform
-3. Run `twine upload dist/*` to upload it to PyPI
+1. Bump the version number in `pyproject.toml`
+2. Run `flit build` to create an installation package
+3. Run `twine upload --repository-url https://test.pypi.org/legacy/ dist/*` to upload it to PyPI's test platform
+4. Run `twine upload dist/*` to upload it to PyPI
 
 ### Version History
+* 
+* __v0.2.1__ - add in a date hack to resolve a lower-level bug in the Media Cloud legacy count-over-time results
 * __v0.2.0__ - add in support for Media Cloud legacy database
 * __v0.1.7__ - corrected support for a "filters" kwarg in online_news
 * __v0.1.6__ - Added support for a "filters" kwarg in online_news
@@ -29,4 +32,3 @@ Make sure `pip install flit twine` so you can build and deploy to PyPI.
 * __v0.1.2__ - Test Completeness
 * __v0.1.1__ - Parity with web-search module, and language model
 * __v0.1.0__ - Initial pypi upload 
-* 
