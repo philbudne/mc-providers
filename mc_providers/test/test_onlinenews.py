@@ -310,10 +310,13 @@ class OnlineNewsMediaCloudProviderTest(unittest.TestCase):
             assert 'count' in item
 
     def test_normalized_count_over_time(self):
-        results = self._provider.normalized_count_over_time("Trump",
-                                                            dt.datetime.strptime("2019-01-01", "%Y-%m-%d"),
-                                                            dt.datetime.strptime("2019-02-01", "%Y-%m-%d"))
+        results = self._provider.normalized_count_over_time("robots",
+                                                            dt.datetime(2023, 2, 11),
+                                                            dt.datetime(2023, 3, 16))
         assert 'counts' in results
         assert 'total' in results
         assert results['total'] > 0
         assert 'normalized_total' in results
+        # verify that the 'date' property in every item of results['counts'] is unique
+        dates = [item['date'] for item in results['counts']]
+        assert len(dates) == len(set(dates))

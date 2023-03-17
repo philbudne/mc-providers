@@ -60,22 +60,39 @@ class ContentProvider(ABC):
                                    **kwargs) -> Dict:
         """
         Useful for rendering attention-over-time charts with extra information suitable for normalizing
+        HACK: calling _sum_count_by_date for now to solve a problem specific to the Media Cloud provider
         :param query:
         :param start_date:
         :param end_date:
         :param kwargs:
         :return:
         """
-        matching_content_counts = self.count_over_time(query, start_date, end_date, **kwargs)['counts']
+        matching_content_counts = self._sum_count_by_date(
+            self.count_over_time(query, start_date, end_date, **kwargs)['counts'])
         matching_total = sum([d['count'] for d in matching_content_counts])
-        no_query_content_counts = self.count_over_time(self._everything_query(), start_date, end_date,
-                                                       **kwargs)['counts']
+        no_query_content_counts = self._sum_count_by_date(
+            self.count_over_time(self._everything_query(), start_date, end_date,**kwargs)['counts'])
         no_query_total = sum([d['count'] for d in no_query_content_counts])
         return {
             'counts': _combined_split_and_normalized_counts(matching_content_counts, no_query_content_counts),
             'total': matching_total,
             'normalized_total': no_query_total,
         }
+
+    def _sum_count_by_date(self, counts: List[Dict]) -> List[Dict]:
+        """
+        Given a list of counts, sum the counts by date
+        :param counts:
+        :return:
+        """
+        counts_by_date = collections.defaultdict(int)
+        for c in counts:
+            date = c['date']
+            counts_by_date[date] = 0
+            for d in counts:
+                if d['date'] == date:
+                    counts_by_date[date] += d['count']
+        return [{'date': d, 'count': c} for d, c in counts_by_date.items()]
 
     def _everything_query(self) -> str:
         """
