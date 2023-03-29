@@ -1,6 +1,6 @@
 [project]
 name = "mc-providers"
-version = "0.2.1"
+version = "0.2.2"
 authors = [
     {name = "Paige Gulley", email = "nano3.14@gmail.com"},
     {name = "Rahul Bhargava", email = "r.bhargava@northeastern.edu"},
@@ -25,7 +25,8 @@ dependencies = [
     "wayback-news-search == 1.0.*",
     "fasttext == 0.9.*",
     "mediacloud-metadata",
-    "mediacloud == 3.*",  # need to use prior version to query the legacy api
+    "mediacloud",  
+    "mediacloud-api-legacy",
 ]
 
 [tool.flit.sdist]

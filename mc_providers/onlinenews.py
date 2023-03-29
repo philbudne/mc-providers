@@ -5,7 +5,7 @@ import logging
 import numpy as np
 import random
 from waybacknews.searchapi import SearchApiClient
-from mediacloud.api import MediaCloud
+from mediacloud_legacy.api import MediaCloud
 import mcmetadata
 from collections import Counter
 from .language import stopwords_for_language

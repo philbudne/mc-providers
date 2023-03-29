@@ -10,6 +10,7 @@ from .youtube import YouTubeYouTubeProvider
 from .onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudProvider
 
 MEDIA_CLOUD_API_KEY = os.getenv('MEDIA_CLOUD_API_KEY', None)
+LEGACY_MEDIA_CLOUD_API_KEY = os.getenv('LEGACY_MEDIACLOUD_API_KEY', None)
 YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY', None)
 TWITTER_API_BEARER_TOKEN = os.getenv('TWITTER_API_BEARER_TOKEN', None)
 
