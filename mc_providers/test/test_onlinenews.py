@@ -7,6 +7,9 @@ import datetime as dt
 import itertools
 import random
 import copy
+import mediacloud.api
+import mediacloud_legacy.api
+import mediacloud_legacy.tags
 
 
 class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
@@ -266,7 +269,31 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
         random.shuffle(new_domains)
         return new_domains
         
-        
+    def test_directory_and_search(self):
+        mc = mediacloud.api.DirectoryApi(MEDIA_CLOUD_API_KEY)
+        # find the colleciton we're interested in
+        matching_collections = mc.collection_list(mc.PLATFORM_ONLINE_NEWS, name="United States - National")
+        assert len(matching_collections['results']) > 0
+        collection = matching_collections['results'][0]
+        # get the domains for all the sources within that collection
+        offset = 0
+        sources = []
+        while True:
+            response = mc.source_list(collection_id=collection['id'], limit=1000, offset=offset)
+            sources += response['results']
+            if response['next'] is None:
+                break
+            offset += len(response['results'])
+        domains = [s['name'] for s in sources]
+        # then query it for stories with the collection id
+        all_stories = []
+        for page_of_stories in self._provider.all_items("robots", dt.datetime(2023, 2, 11), dt.datetime(2023, 2, 12),
+                                                        domains=domains):
+            assert len(page_of_stories) > 0
+            all_stories.extend(page_of_stories)
+        assert len(all_stories) > 0
+
+
 '''
     def test_top_tlds(self):
         results = self._provider.top_tlds("coronavirus", dt.datetime(2022, 11, 1), dt.datetime(2022, 11, 10))
@@ -320,3 +347,18 @@ class OnlineNewsMediaCloudProviderTest(unittest.TestCase):
         # verify that the 'date' property in every item of results['counts'] is unique
         dates = [item['date'] for item in results['counts']]
         assert len(dates) == len(set(dates))
+
+    def test_source_mgr_and_search(self):
+        # first find a collection by name
+        GEOGRAPHIC_COLLECTONS_TAG_SET = 15765102
+        legacy_mc = mediacloud_legacy.api.MediaCloud(LEGACY_MEDIA_CLOUD_API_KEY)
+        matching_collections = legacy_mc.tagList(tag_sets_id=GEOGRAPHIC_COLLECTONS_TAG_SET,
+                                                 name_like="United States - National")
+        assert len(matching_collections) > 0
+        collection = matching_collections[0]
+        # then query it for stories with the collection id
+        all_stories = []
+        for page_of_stories in self._provider.all_items("robots", dt.datetime(2023, 2, 11), dt.datetime(2023, 2, 12),
+                                                        collections=[collection['tags_id']]):
+            all_stories.extend(page_of_stories)
+        assert len(all_stories) > 0
