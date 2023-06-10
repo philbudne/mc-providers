@@ -10,7 +10,7 @@ from .youtube import YouTubeYouTubeProvider
 from .onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudProvider
 
 MEDIA_CLOUD_API_KEY = os.getenv('MEDIA_CLOUD_API_KEY', None)
-LEGACY_MEDIA_CLOUD_API_KEY = os.getenv('LEGACY_MEDIACLOUD_API_KEY', None)
+LEGACY_MEDIA_CLOUD_API_KEY = os.getenv('LEGACY_MEDIA_CLOUD_API_KEY', None)
 YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY', None)
 TWITTER_API_BEARER_TOKEN = os.getenv('TWITTER_API_BEARER_TOKEN', None)
 
@@ -44,8 +44,7 @@ def available_provider_names() -> List[str]:
         platforms.append(provider_name(PLATFORM_YOUTUBE, PLATFORM_SOURCE_YOUTUBE))
     platforms.append(provider_name(PLATFORM_REDDIT, PLATFORM_SOURCE_PUSHSHIFT))
     platforms.append(provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_WAYBACK_MACHINE))
-    if MEDIA_CLOUD_API_KEY:
-        platforms.append(provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD))
+    platforms.append(provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD))
     return platforms
 
 
@@ -54,7 +53,7 @@ def provider_by_name(name: str) -> ContentProvider:
     return provider_for(parts[0], parts[1])
 
 
-def provider_for(platform: str, source: str) -> ContentProvider:
+def provider_for(platform: str, source: str, api_key: str = None) -> ContentProvider:
     """
     A factory method that returns the appropriate data provider. Throws an exception to let you know if the
     arguments are unsupported.
@@ -65,17 +64,23 @@ def provider_for(platform: str, source: str) -> ContentProvider:
     available = available_provider_names()
     if provider_name(platform, source) in available:
         if (platform == PLATFORM_TWITTER) and (source == PLATFORM_SOURCE_TWITTER):
-            platform_provider = TwitterTwitterProvider(TWITTER_API_BEARER_TOKEN)
+            platform_provider = TwitterTwitterProvider(ACCESS_KEY)
+            
         elif (platform == PLATFORM_REDDIT) and (source == PLATFORM_SOURCE_PUSHSHIFT):
             platform_provider = RedditPushshiftProvider()
+        
         elif (platform == PLATFORM_YOUTUBE) and (source == PLATFORM_SOURCE_YOUTUBE):
-            platform_provider = YouTubeYouTubeProvider(YOUTUBE_API_KEY)
+            platform_provider = YouTubeYouTubeProvider(ACCESS_KEY)
+        
         elif (platform == PLATFORM_ONLINE_NEWS) and (source == PLATFORM_SOURCE_WAYBACK_MACHINE):
             platform_provider = OnlineNewsWaybackMachineProvider()
+        
         elif (platform == PLATFORM_ONLINE_NEWS) and (source == PLATFORM_SOURCE_MEDIA_CLOUD):
-            platform_provider = OnlineNewsMediaCloudProvider(MEDIA_CLOUD_API_KEY)
+            platform_provider = OnlineNewsMediaCloudProvider(api_key)
+        
         else:
             raise UnknownProviderException(platform, source)
+        
         return platform_provider
     else:
         raise UnavailableProviderException(platform, source)
