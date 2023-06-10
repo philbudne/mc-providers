@@ -64,13 +64,13 @@ def provider_for(platform: str, source: str, api_key: str = None) -> ContentProv
     available = available_provider_names()
     if provider_name(platform, source) in available:
         if (platform == PLATFORM_TWITTER) and (source == PLATFORM_SOURCE_TWITTER):
-            platform_provider = TwitterTwitterProvider(ACCESS_KEY)
+            platform_provider = TwitterTwitterProvider(TWITTER_API_BEARER_TOKEN)
             
         elif (platform == PLATFORM_REDDIT) and (source == PLATFORM_SOURCE_PUSHSHIFT):
             platform_provider = RedditPushshiftProvider()
         
         elif (platform == PLATFORM_YOUTUBE) and (source == PLATFORM_SOURCE_YOUTUBE):
-            platform_provider = YouTubeYouTubeProvider(ACCESS_KEY)
+            platform_provider = YouTubeYouTubeProvider(YOUTUBE_API_KEY)
         
         elif (platform == PLATFORM_ONLINE_NEWS) and (source == PLATFORM_SOURCE_WAYBACK_MACHINE):
             platform_provider = OnlineNewsWaybackMachineProvider()
