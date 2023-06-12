@@ -21,6 +21,7 @@ Make sure `pip install flit twine` so you can build and deploy to PyPI.
 4. Run `twine upload dist/*` to upload it to PyPI
 
 ### Version History
+* __v0.2.3__ - removed support for API keys in environment variables- now expected as an argument in `providers.provider_for`
 * __v0.2.2__ - transition to use the dedicated mediacloud-api-legacy package to avoid version conflictsgit
 * __v0.2.1__ - add in a date hack to resolve a lower-level bug in the Media Cloud legacy count-over-time results
 * __v0.2.0__ - add in support for Media Cloud legacy database
