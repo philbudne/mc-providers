@@ -2,12 +2,13 @@ import unittest
 import datetime as dt
 import copy
 import random
+import os
 
-from .. import TWITTER_API_BEARER_TOKEN
 from ..twitter import TwitterTwitterProvider
 
 TERM = "robots"
 
+TWITTER_API_BEARER_TOKEN = os.getenv('TWITTER_API_BEARER_TOKEN', None)
 
 class TwitterTwitterProviderTest(unittest.TestCase):
 
