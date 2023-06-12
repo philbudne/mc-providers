@@ -1,6 +1,6 @@
 import unittest
 
-from .. import MEDIA_CLOUD_API_KEY, LEGACY_MEDIA_CLOUD_API_KEY
+
 from ..onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudProvider
 
 import datetime as dt
@@ -10,7 +10,10 @@ import copy
 import mediacloud.api
 import mediacloud_legacy.api
 import mediacloud_legacy.tags
+import os
 
+LEGACY_MEDIA_CLOUD_API_KEY = os.getenv('LEGACY_MEDIA_CLOUD_API_KEY', None)
+MEDIA_CLOUD_API_KEY = os.getenv('MEDIA_CLOUD_API_KEY', None)
 
 class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
 

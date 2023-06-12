@@ -2,10 +2,12 @@
 
 import unittest
 import datetime as dt
+import os
 
-from .. import YOUTUBE_API_KEY
 from ..youtube import YouTubeYouTubeProvider
 from ..exceptions import UnsupportedOperationException
+
+YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY', None)
 
 TERM = "robot"
 DAY_WINDOW = 100  # window in days to search for tem

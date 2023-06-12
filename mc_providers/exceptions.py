@@ -20,3 +20,7 @@ class UnavailableProviderException(ProviderException):
 class QueryingEverythingUnsupportedQuery(ProviderException):
     def __init__(self):
         super().__init__("Can't query everything")
+
+class APIKeyRequired(ProviderException):
+    def __init__(self, platform):
+        super().__init__("Provider {} requires an API key at construction".format(platform))
