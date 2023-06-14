@@ -41,9 +41,9 @@ def available_provider_names() -> List[str]:
     return platforms
 
 
-def provider_by_name(name: str) -> ContentProvider:
+def provider_by_name(name: str, api_key: str = None) -> ContentProvider:
     parts = name.split(NAME_SEPARATOR)
-    return provider_for(parts[0], parts[1])
+    return provider_for(parts[0], parts[1], api_key)
 
 
 def provider_for(platform: str, source: str, api_key: str = None) -> ContentProvider:
