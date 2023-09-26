@@ -226,7 +226,6 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
         else:
             queries = domain_queries + filter_queries
         
-        print(len(queries))
         return queries
     
     @classmethod
