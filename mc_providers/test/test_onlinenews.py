@@ -312,7 +312,7 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
 class OnlineNewsMediaCloudProviderTest(unittest.TestCase):
 
     def setUp(self):
-        self._provider = OnlineNewsMediaCloudProvider(LEGACY_MEDIA_CLOUD_API_KEY)
+        self._provider = OnlineNewsMediaCloudLegacyProvider(LEGACY_MEDIA_CLOUD_API_KEY)
 
     def test_count(self):
         results = self._provider.count("Trump", dt.datetime.strptime("2022-03-01", "%Y-%m-%d"),

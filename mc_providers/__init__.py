@@ -7,7 +7,7 @@ from .provider import ContentProvider
 from .reddit import RedditPushshiftProvider
 from .twitter import TwitterTwitterProvider
 from .youtube import YouTubeYouTubeProvider
-from .onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudProvider
+from .onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudProvider, OnlineNewsMediaCloudLegacyProvider
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,8 @@ PLATFORM_SOURCE_PUSHSHIFT = 'pushshift'
 PLATFORM_SOURCE_TWITTER = 'twitter'
 PLATFORM_SOURCE_YOUTUBE = 'youtube'
 PLATFORM_SOURCE_WAYBACK_MACHINE = 'waybackmachine'
-PLATFORM_SOURCE_MEDIA_CLOUD = 'mediacloud'
+PLATFORM_SOURCE_MEDIA_CLOUD_LEGACY = 'mclegacy'
+PLATFORM_SOURCE_MEDIA_CLOUD = "mediacloud"
 
 NAME_SEPARATOR = "-"
 
@@ -38,6 +39,7 @@ def available_provider_names() -> List[str]:
     platforms.append(provider_name(PLATFORM_REDDIT, PLATFORM_SOURCE_PUSHSHIFT))
     platforms.append(provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_WAYBACK_MACHINE))
     platforms.append(provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD))
+    platforms.append(provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD_LEGACY))
     return platforms
 
 
@@ -73,12 +75,15 @@ def provider_for(platform: str, source: str, api_key: str = None) -> ContentProv
         
         elif (platform == PLATFORM_ONLINE_NEWS) and (source == PLATFORM_SOURCE_WAYBACK_MACHINE):
             platform_provider = OnlineNewsWaybackMachineProvider()
-        
+
         elif (platform == PLATFORM_ONLINE_NEWS) and (source == PLATFORM_SOURCE_MEDIA_CLOUD):
+            platform_provider = OnlineNewsMediaCloudProvider()
+        
+        elif (platform == PLATFORM_ONLINE_NEWS) and (source == PLATFORM_SOURCE_MEDIA_CLOUD_LEGACY):
             if api_key is None:
                 raise APIKeyRequired(platform)
             
-            platform_provider = OnlineNewsMediaCloudProvider(api_key)
+            platform_provider = OnlineNewsMediaCloudLegacyProvider(api_key)
         
         else:
             raise UnknownProviderException(platform, source)
