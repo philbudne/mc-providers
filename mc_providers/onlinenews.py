@@ -284,7 +284,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return "OnlineNewsAbstractProvider"
 
 
-class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider)
+class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
     """
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
@@ -304,6 +304,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     """
     Provider interface to access new mediacloud-news-search archive. 
     All these endpoints accept a `domains: List[str]` keyword arg.
+    For now we just use the wayback client, but eventually we'll have our own fork
 
     """
     API_BASE_URL = "https://news-search-api.tarbell.mediacloud.org/v1/"
