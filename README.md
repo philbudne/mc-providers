@@ -21,6 +21,7 @@ Make sure `pip install flit twine` so you can build and deploy to PyPI.
 4. Run `twine upload dist/*` to upload it to PyPI
 
 ### Version History
+* __v0.2.5__ - Alignment with new mediacloud system. Old onlinenews provider is now "onlinenews-mclegacy", "onlinenews-mediacloud" now queries the new index.
 * __v0.2.4__ - Added support for api keys via "provider_by_name"
 * __v0.2.3__ - removed support for API keys in environment variables- now expected as an argument in `providers.provider_for`
 * __v0.2.2__ - transition to use the dedicated mediacloud-api-legacy package to avoid version conflictsgit
