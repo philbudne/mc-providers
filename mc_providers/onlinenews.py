@@ -13,19 +13,22 @@ from .provider import ContentProvider
 from .cache import CachingManager
 
 
-class OnlineNewsWaybackMachineProvider(ContentProvider):
+class OnlineNewsAbstractProvider(ContentProvider):
     """
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
-
-    DEFAULT_COLLECTION = "mediacloud"
+    
     MAX_QUERY_LENGTH = pow(2, 14)
     
     
     def __init__(self):
         super(OnlineNewsWaybackMachineProvider, self).__init__()
-        self._client = SearchApiClient(self.DEFAULT_COLLECTION)
+        self._client = self.get_client()
         self._logger = logging.getLogger(__name__)
+
+
+    def get_client(self):
+        raise NotImplementedError("Abstract provider class should not be implimented directly")
 
     def everything_query(self) -> str:
         return '*'
@@ -278,10 +281,47 @@ class OnlineNewsWaybackMachineProvider(ContentProvider):
 
     def __repr__(self):
         # important to keep this unique among platforms so that the caching works right
+        return "OnlineNewsAbstractProvider"
+
+
+class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider)
+    """
+    All these endpoints accept a `domains: List[str]` keyword arg.
+    """
+
+    def __init__(self):
+        super(OnlineNewsAbstractProvider, self).__init__()
+
+    def get_client():
+        return SearchApiClient("mediacloud")
+
+    def __repr__(self):
+        # important to keep this unique among platforms so that the caching works right
         return "OnlineNewsWaybackMachineProvider"
 
 
-class OnlineNewsMediaCloudProvider(ContentProvider):
+class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
+    """
+    Provider interface to access new mediacloud-news-search archive. 
+    All these endpoints accept a `domains: List[str]` keyword arg.
+
+    """
+    API_BASE_URL = "https://news-search-api.tarbell.mediacloud.org/v1/"
+    DEFAULT_COLLECTION = "mediacloud_search_text_*"
+
+    def __init__(self):
+        super(OnlineNewsAbstractProvider, self).__init__()
+
+    def get_client():
+        #This seems cleaner than having a whole parallel client library
+        api_client = SearchApiClient(collection:self.DEFAULT_COLLECTION, api_base_url:self.API_BASE_URL)
+
+        return api_client
+
+    def __repr__(self):
+        return "OnlineNewsMediaCloudProvider"
+
+class OnlineNewsMediaCloudLegacyProvider(ContentProvider):
     """
     Media Cloud is a platform for analyzing news media. It is a free, open-source platform for
     collecting, analyzing, and visualizing news media content. It is a project of the MIT Media
@@ -432,7 +472,7 @@ class OnlineNewsMediaCloudProvider(ContentProvider):
 
     def __repr__(self):
         # important to keep this unique among platforms so that the caching works right
-        return "OnlineNewsMediaCloudProvider"
+        return "OnlineNewsMediaCloudLegacyProvider"
 
     @classmethod
     def _matches_to_rows(cls, matches: List) -> List:
