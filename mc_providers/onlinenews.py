@@ -22,7 +22,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     
     
     def __init__(self):
-        super(OnlineNewsWaybackMachineProvider, self).__init__()
+        super().__init__()
         self._client = self.get_client()
         self._logger = logging.getLogger(__name__)
 
@@ -263,6 +263,30 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
     @classmethod
     def _matches_to_rows(cls, matches: List) -> List:
+        raise NotImplementedError()
+
+    @classmethod
+    def _match_to_row(cls, match: Dict) -> Dict:
+        raise NotImplementedError()
+
+    def __repr__(self):
+        # important to keep this unique among platforms so that the caching works right
+        return "OnlineNewsAbstractProvider"
+
+
+class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
+    """
+    All these endpoints accept a `domains: List[str]` keyword arg.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    def get_client(self):
+        return SearchApiClient("mediacloud")
+
+    @classmethod
+    def _matches_to_rows(cls, matches: List) -> List:
         return [OnlineNewsWaybackMachineProvider._match_to_row(m) for m in matches]
 
     @classmethod
@@ -281,23 +305,9 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
     def __repr__(self):
         # important to keep this unique among platforms so that the caching works right
-        return "OnlineNewsAbstractProvider"
-
-
-class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
-    """
-    All these endpoints accept a `domains: List[str]` keyword arg.
-    """
-
-    def __init__(self):
-        super(OnlineNewsAbstractProvider, self).__init__()
-
-    def get_client():
-        return SearchApiClient("mediacloud")
-
-    def __repr__(self):
-        # important to keep this unique among platforms so that the caching works right
         return "OnlineNewsWaybackMachineProvider"
+
+
 
 
 class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
@@ -311,13 +321,22 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     DEFAULT_COLLECTION = "mediacloud_search_text_*"
 
     def __init__(self):
-        super(OnlineNewsAbstractProvider, self).__init__()
+        super().__init__()
 
-    def get_client():
+    def get_client(self):
         #This seems cleaner than having a whole parallel client library
-        api_client = SearchApiClient(collection:self.DEFAULT_COLLECTION, api_base_url:self.API_BASE_URL)
+        api_client = SearchApiClient(collection = self.DEFAULT_COLLECTION, api_base_url = self.API_BASE_URL)
 
         return api_client
+
+    @classmethod
+    def _matches_to_rows(cls, matches: List) -> List:
+        return [OnlineNewsMediaCloudProvider._match_to_row(m) for m in matches]
+
+    @classmethod
+    def _match_to_row(cls, match: Dict) -> Dict:
+        #I think we just want the match as is
+        return match
 
     def __repr__(self):
         return "OnlineNewsMediaCloudProvider"
@@ -333,7 +352,7 @@ class OnlineNewsMediaCloudLegacyProvider(ContentProvider):
     """
 
     def __init__(self, api_key):
-        super(OnlineNewsMediaCloudProvider, self).__init__()
+        super().__init__()
         self._logger = logging.getLogger(__name__)
         self._api_key = api_key
         self._mc_client = MediaCloud(api_key)
