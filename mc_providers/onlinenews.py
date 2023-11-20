@@ -30,6 +30,10 @@ class OnlineNewsAbstractProvider(ContentProvider):
     def get_client(self):
         raise NotImplementedError("Abstract provider class should not be implimented directly")
 
+    @classmethod
+    def domain_search_string(cls):
+        raise NotImplementedError("Abstract provider class should not be implimented directly")
+
     def everything_query(self) -> str:
         return '*'
 
@@ -239,7 +243,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         
         if len(domains) > 0:
             domain_string = " OR ".join(domains)
-            domain_clause = f"domain:({domain_string})"
+            domain_clause = f"{cls.domain_search_string()}:({domain_string})"
             
         filters = kwargs.get('filters', [])
         filter_clause = ""
@@ -286,6 +290,10 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
         return SearchApiClient("mediacloud")
 
     @classmethod
+    def domain_search_string(cls):
+        return "domain"
+
+    @classmethod
     def _matches_to_rows(cls, matches: List) -> List:
         return [OnlineNewsWaybackMachineProvider._match_to_row(m) for m in matches]
 
@@ -328,6 +336,10 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         api_client = SearchApiClient(collection = self.DEFAULT_COLLECTION, api_base_url = self.API_BASE_URL)
 
         return api_client
+
+    @classmethod
+    def domain_search_string(cls):
+        return "canonical_domain"
 
     @classmethod
     def _matches_to_rows(cls, matches: List) -> List:

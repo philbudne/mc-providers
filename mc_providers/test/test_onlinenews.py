@@ -309,7 +309,8 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
 '''
 
 
-class OnlineNewsMediaCloudProviderTest(unittest.TestCase):
+
+class OnlineNewsMediaCloudLegacyProviderTest(unittest.TestCase):
 
     def setUp(self):
         self._provider = OnlineNewsMediaCloudLegacyProvider(LEGACY_MEDIA_CLOUD_API_KEY)
