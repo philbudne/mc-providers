@@ -371,5 +371,23 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
     def setUp(self):
         self._provider = OnlineNewsMediaCloudProvider()
 
-    def test_paged_articles(self):
-        assert True
+    def test_paged_items(self):
+        query = "biden"
+        start_date = dt.datetime(2023, 11, 25)
+        end_date = dt.datetime(2023, 11, 26)
+        story_count = self._provider.count(query, start_date, end_date)
+        # make sure test case is reasonable size (ie. more than one page, but not too many pages
+        assert story_count > 0
+        assert story_count < 10000
+        # fetch first page
+        page1, next_token1 = self._provider.paged_items(query, start_date, end_date)
+        assert len(page1) > 0
+        assert next_token1 is not None
+        page1_url1 = page1[0]['url']
+        # grab token, fetch next page
+        page2, next_token2 = self._provider.paged_items(query, start_date, end_date, pagination_token=next_token1)
+        assert len(page2) > 0
+        assert next_token2 is not None
+        assert next_token1 != next_token2  # verify paging token changed
+        page2_urls = [s['url'] for s in page2]
+        assert page1_url1 not in page2_urls  # verify pages don't overlap

@@ -22,7 +22,7 @@ dependencies = [
     "python-dateutil == 2.8.*",
     "dateparser == 1.1.*",
     "requests",
-    "wayback-news-search == 1.0.*",
+    "wayback-news-search == 1.1.*",
     "fasttext == 0.9.*",
     "mediacloud-metadata",
     "mediacloud",  

@@ -22,8 +22,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     """
     
     MAX_QUERY_LENGTH = pow(2, 14)
-    
-    
+
     def __init__(self):
         super().__init__()
         self._client = self.get_client()
@@ -89,6 +88,15 @@ class OnlineNewsAbstractProvider(ContentProvider):
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
             for page in self._client.all_articles(subquery, start_date, end_date, **kwargs):
                 yield self._matches_to_rows(page)
+
+    def paged_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs):
+        '''
+        Note - this is not chunk'd so you can't run giant queries page by page... use `all_items` instead.
+        This kwargs should include `pagination_token`, which will get relayed in to the api client and fetch
+        the right page of results.
+        '''
+        page = self._client.paged_articles(query, start_date, end_date, **kwargs)
+        return self._matches_to_rows(page)
 
     #Chunk'd
     @CachingManager.cache()
@@ -319,14 +327,11 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
         return "OnlineNewsWaybackMachineProvider"
 
 
-
-
 class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     """
     Provider interface to access new mediacloud-news-search archive. 
     All these endpoints accept a `domains: List[str]` keyword arg.
     For now we just use the wayback client, but eventually we'll have our own fork
-
     """
     API_BASE_URL = "https://news-search-api.tarbell.mediacloud.org/v1/"
     DEFAULT_COLLECTION = "mediacloud_search_text_*"
@@ -336,8 +341,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
     def get_client(self):
         #This seems cleaner than having a whole parallel client library
-        api_client = SearchApiClient(collection = self.DEFAULT_COLLECTION, api_base_url = self.API_BASE_URL)
-
+        api_client = SearchApiClient(collection=self.DEFAULT_COLLECTION, api_base_url=self.API_BASE_URL)
         return api_client
 
     @classmethod

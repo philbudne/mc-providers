@@ -56,6 +56,12 @@ class ContentProvider(ABC):
         # yields a page of items
         raise NotImplementedError("Doesn't support fetching all matching content.")
 
+    def paged_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000,
+                    **kwargs):
+        # return just one page of items; implementing subclasses should read in token, offset, or whatever
+        # else they need from `kwargs` to determine which page to return
+        raise NotImplementedError("Doesn't support fetching all matching content.")
+
     def normalized_count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
                                    **kwargs) -> Dict:
         """
