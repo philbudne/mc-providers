@@ -5,3 +5,4 @@ dist/*
 .idea
 build
 mc_providers.egg-info
+.env
