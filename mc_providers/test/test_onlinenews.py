@@ -38,8 +38,8 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
             assert item['count'] > 0
 
     def test_domain_clause(self):
-        domain = "cnn.com"
-        results = self._provider.sample("coronavirus".format(domain),
+        domain = "yahoo.com"
+        results = self._provider.sample("*".format(domain),
                                         dt.datetime(2023, 11, 20), dt.datetime(2023, 11, 30),
                                         domains=[domain])
         assert len(results) > 0
@@ -271,7 +271,7 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
         
     def test_directory_and_search(self):
         mc = mediacloud.api.DirectoryApi(MEDIA_CLOUD_API_KEY)
-        # find the colleciton we're interested in
+        # find the collection we're interested in
         matching_collections = mc.collection_list(mc.PLATFORM_ONLINE_NEWS, name="United States - National")
         assert len(matching_collections['results']) > 0
         collection = matching_collections['results'][0]
@@ -287,10 +287,13 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
         domains = [s['name'] for s in sources]
         # then query it for stories with the collection id
         all_stories = []
-        for page_of_stories in self._provider.all_items("robots", dt.datetime(2023, 11, 19), dt.datetime(2023, 11, 20),
+        max_stories = 4500  # just to make sure it doesn't spin forever
+        for page_of_stories in self._provider.all_items("*", dt.datetime(2023, 1, 1), dt.datetime(2023, 12, 1),
                                                         domains=domains):
             assert len(page_of_stories) > 0
             all_stories.extend(page_of_stories)
+            if len(all_stories) > max_stories:
+                break
         assert len(all_stories) > 0
 
 
@@ -370,6 +373,35 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
 
     def setUp(self):
         self._provider = OnlineNewsMediaCloudProvider()
+        #self._provider._client.API_BASE_URL = "http://localhost:8020/v1/"
 
-    def test_paged_articles(self):
-        assert True
+    def test_expanded_story_list(self):
+        query = "*"
+        start_date = dt.datetime(2020, 1, 1)
+        end_date = dt.datetime(2023, 12, 1)
+        page1, next_token1 = self._provider.paged_items(query, start_date, end_date, expanded=True)
+        assert len(page1) > 0
+        for story in page1:
+            assert "id" in story
+            assert "text" in story
+            assert len(story['text']) > 0
+
+    def test_paged_items(self):
+        query = "biden"
+        start_date = dt.datetime(2020, 1, 1)
+        end_date = dt.datetime(2023, 12, 1)
+        story_count = self._provider.count(query, start_date, end_date)
+        # make sure test case is reasonable size (ie. more than one page, but not too many pages
+        assert story_count > 1000
+        # fetch first page
+        page1, next_token1 = self._provider.paged_items(query, start_date, end_date)
+        assert len(page1) > 0
+        assert next_token1 is not None
+        page1_url1 = page1[0]['url']
+        # grab token, fetch next page
+        page2, next_token2 = self._provider.paged_items(query, start_date, end_date, pagination_token=next_token1)
+        assert len(page2) > 0
+        assert next_token2 is not None
+        assert next_token1 != next_token2  # verify paging token changed
+        page2_urls = [s['url'] for s in page2]
+        assert page1_url1 not in page2_urls  # verify pages don't overlap
