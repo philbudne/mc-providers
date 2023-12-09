@@ -89,14 +89,15 @@ class OnlineNewsAbstractProvider(ContentProvider):
             for page in self._client.all_articles(subquery, start_date, end_date, **kwargs):
                 yield self._matches_to_rows(page)
 
-    def paged_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs):
+    def paged_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs)\
+            -> tuple[List[Dict], str] :
         '''
         Note - this is not chunk'd so you can't run giant queries page by page... use `all_items` instead.
         This kwargs should include `pagination_token`, which will get relayed in to the api client and fetch
         the right page of results.
         '''
-        page = self._client.paged_articles(query, start_date, end_date, **kwargs)
-        return self._matches_to_rows(page)
+        page, pagination_token = self._client.paged_articles(query, start_date, end_date, **kwargs)
+        return self._matches_to_rows(page), pagination_token
 
     #Chunk'd
     @CachingManager.cache()
@@ -354,7 +355,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
     @classmethod
     def _match_to_row(cls, match: Dict) -> Dict:
-        return {
+        story_info = {
             'media_name': match['canonical_domain'],
             'media_url': match['canonical_domain'],
             'id': hashlib.md5(match['normalized_url'].encode('utf8')).hexdigest(),
@@ -364,6 +365,9 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             'language': match['language'],
             'indexed_date': dateparser.parse(match['publication_date']),
         }
+        if 'text_content' in match:
+            story_info['text'] = match['text_content']
+        return story_info
 
     def __repr__(self):
         return "OnlineNewsMediaCloudProvider"
