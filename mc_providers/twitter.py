@@ -7,6 +7,7 @@ from collections import Counter
 import numpy as np 
 from time import sleep
 
+from .errors import deprecated
 from .provider import ContentProvider
 from .exceptions import UnsupportedOperationException
 from .cache import CachingManager
@@ -15,6 +16,8 @@ from .language import top_detected
 TWITTER_API_URL = 'https://api.twitter.com/2/'
 TWITTER_DATE_FORMAT = '%Y-%m-%dT%H:%M:%S.%f%z'
 
+
+@deprecated
 class TwitterTwitterProvider(ContentProvider):
     """
     All these endpoints accept a `usernames: List[str]` keyword arg.

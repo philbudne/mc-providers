@@ -1,6 +1,7 @@
 import datetime as dt
 from typing import List, Dict
 import dateparser
+import hashlib
 import logging
 import numpy as np
 import random
@@ -8,6 +9,8 @@ from waybacknews.searchapi import SearchApiClient
 from mediacloud_legacy.api import MediaCloud
 import mcmetadata
 from collections import Counter
+
+from .errors import deprecated
 from .language import stopwords_for_language
 from .provider import ContentProvider
 from .cache import CachingManager
@@ -347,12 +350,22 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
     @classmethod
     def _match_to_row(cls, match: Dict) -> Dict:
-        #I think we just want the match as is
-        return match
+        return {
+            'media_name': match['canonical_domain'],
+            'media_url': match['canonical_domain'],
+            'id': hashlib.md5(match['normalized_url'].encode('utf8')).hexdigest(),
+            'title': match['article_title'],
+            'publish_date': dateparser.parse(match['publication_date']),
+            'url': match['url'],
+            'language': match['language'],
+            'indexed_date': dateparser.parse(match['publication_date']),
+        }
 
     def __repr__(self):
         return "OnlineNewsMediaCloudProvider"
 
+
+@deprecated
 class OnlineNewsMediaCloudLegacyProvider(ContentProvider):
     """
     Media Cloud is a platform for analyzing news media. It is a free, open-source platform for

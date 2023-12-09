@@ -1,3 +1,4 @@
+'''
 import unittest
 import datetime as dt
 import copy
@@ -129,3 +130,4 @@ class TwitterTwitterProviderTest(unittest.TestCase):
         new_domains = copy.copy(self.LONG_USER_COLLECTION)
         random.shuffle(new_domains)
         return new_domains
+'''

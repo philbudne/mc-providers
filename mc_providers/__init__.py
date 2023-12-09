@@ -1,6 +1,5 @@
 import logging
 from typing import List
-import os
 
 from .exceptions import UnknownProviderException, UnavailableProviderException, APIKeyRequired
 from .provider import ContentProvider

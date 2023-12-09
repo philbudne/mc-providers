@@ -4,6 +4,7 @@ import requests
 from typing import List, Dict
 import logging
 
+from .errors import deprecated
 from .provider import ContentProvider, MC_DATE_FORMAT
 from .cache import CachingManager
 from .language import top_detected
@@ -12,6 +13,7 @@ REDDIT_PUSHSHIFT_URL = "https://api.pushshift.io"
 SUBMISSION_SEARCH_URL = "{}/reddit/submission/search".format(REDDIT_PUSHSHIFT_URL)
 
 
+@deprecated
 class RedditPushshiftProvider(ContentProvider):
 
     def __init__(self):
