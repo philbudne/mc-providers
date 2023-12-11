@@ -1,6 +1,6 @@
 [project]
 name = "mc-providers"
-version = "0.3.0"
+version = "0.4.0"
 authors = [
     {name = "Paige Gulley", email = "nano3.14@gmail.com"},
     {name = "Rahul Bhargava", email = "r.bhargava@northeastern.edu"},
@@ -25,7 +25,7 @@ dependencies = [
     "wayback-news-search == 1.2.*",
     "fasttext == 0.9.*",
     "mediacloud-metadata",
-    "mediacloud",  
+    "mediacloud",
     "mediacloud-api-legacy",
 ]
 

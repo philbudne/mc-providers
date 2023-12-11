@@ -23,6 +23,7 @@ Make sure `pip install flit twine` so you can build and deploy to PyPI.
 6. Run `twine upload dist/*` to upload it to PyPI
 
 ### Version History
+* __v0.4.0__ - Specify custom base URLs via new string param to `provider_by_name` and `provider_for` 
 * __v0.3.0__ - Add support for paging through stories directly, and including text in paged results for speed
 * __v0.2.6__ - Fixed querying by domain on new mediacloud system
 * __v0.2.5__ - Alignment with new mediacloud system. Old onlinenews provider is now "onlinenews-mclegacy", "onlinenews-mediacloud" now queries the new index.
