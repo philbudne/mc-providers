@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict
+from typing import List, Dict, Optional
 import datetime as dt
 import datetime
 from operator import itemgetter
@@ -57,9 +57,9 @@ class ContentProvider(ABC):
         raise NotImplementedError("Doesn't support fetching all matching content.")
 
     def paged_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000,
-                    **kwargs):
-        # return just one page of items; implementing subclasses should read in token, offset, or whatever
-        # else they need from `kwargs` to determine which page to return
+                    **kwargs) -> tuple[List[Dict], Optional[str]]:
+        # return just one page of items and a pagination token to get next page; implementing subclasses
+        # should read in token, offset, or whatever else they need from `kwargs` to determine which page to return
         raise NotImplementedError("Doesn't support fetching all matching content.")
 
     def normalized_count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
