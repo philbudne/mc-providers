@@ -1,5 +1,5 @@
 import logging
-from typing import List
+from typing import List, Optional
 
 from .exceptions import UnknownProviderException, UnavailableProviderException, APIKeyRequired
 from .provider import ContentProvider
@@ -42,17 +42,19 @@ def available_provider_names() -> List[str]:
     return platforms
 
 
-def provider_by_name(name: str, api_key: str = None) -> ContentProvider:
+def provider_by_name(name: str, api_key: Optional[str], base_url: Optional[str]) -> ContentProvider:
     parts = name.split(NAME_SEPARATOR)
-    return provider_for(parts[0], parts[1], api_key)
+    return provider_for(parts[0], parts[1], api_key, base_url)
 
 
-def provider_for(platform: str, source: str, api_key: str = None) -> ContentProvider:
+def provider_for(platform: str, source: str, api_key: Optional[str], base_url: Optional[str]) -> ContentProvider:
     """
     A factory method that returns the appropriate data provider. Throws an exception to let you know if the
     arguments are unsupported.
     :param platform: One of the PLATFORM_* constants above.
     :param source: One of the PLATFORM_SOURCE>* constants above.
+    :param api_key: The API key needed to access the provider.
+    :param base_url: For custom integrations you can provide an alternate base URL for the provider's API server
     :return:
     """
     available = available_provider_names()
@@ -73,10 +75,10 @@ def provider_for(platform: str, source: str, api_key: str = None) -> ContentProv
             platform_provider = YouTubeYouTubeProvider(api_key)
         
         elif (platform == PLATFORM_ONLINE_NEWS) and (source == PLATFORM_SOURCE_WAYBACK_MACHINE):
-            platform_provider = OnlineNewsWaybackMachineProvider()
+            platform_provider = OnlineNewsWaybackMachineProvider(base_url)
 
         elif (platform == PLATFORM_ONLINE_NEWS) and (source == PLATFORM_SOURCE_MEDIA_CLOUD):
-            platform_provider = OnlineNewsMediaCloudProvider()
+            platform_provider = OnlineNewsMediaCloudProvider(base_url)
         
         elif (platform == PLATFORM_ONLINE_NEWS) and (source == PLATFORM_SOURCE_MEDIA_CLOUD_LEGACY):
             if api_key is None:

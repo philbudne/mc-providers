@@ -1,5 +1,5 @@
 import datetime as dt
-from typing import List, Dict
+from typing import List, Dict, Optional
 import dateparser
 import hashlib
 import logging
@@ -23,11 +23,11 @@ class OnlineNewsAbstractProvider(ContentProvider):
     
     MAX_QUERY_LENGTH = pow(2, 14)
 
-    def __init__(self):
+    def __init__(self, base_url: Optional[str]):
         super().__init__()
-        self._client = self.get_client()
         self._logger = logging.getLogger(__name__)
-
+        self._base_url = base_url
+        self._client = self.get_client()
 
     def get_client(self):
         raise NotImplementedError("Abstract provider class should not be implimented directly")
@@ -295,11 +295,11 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, base_url: Optional[str] = None):
+        super().__init__(base_url)
 
     def get_client(self):
-        return SearchApiClient("mediacloud")
+        return SearchApiClient("mediacloud", self._base_url)
 
     @classmethod
     def domain_search_string(cls):
@@ -334,15 +334,15 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     All these endpoints accept a `domains: List[str]` keyword arg.
     For now we just use the wayback client, but eventually we'll have our own fork
     """
-    API_BASE_URL = "https://news-search-api.tarbell.mediacloud.org/v1/"
+    DEFAULT_API_BASE_URL = "https://news-search-api.mediacloud.org/v1/"
     DEFAULT_COLLECTION = "mediacloud_search_text_*"
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, base_url=Optional[str]):
+        super().__init__(base_url)
 
     def get_client(self):
         #This seems cleaner than having a whole parallel client library
-        api_client = SearchApiClient(collection=self.DEFAULT_COLLECTION, api_base_url=self.API_BASE_URL)
+        api_client = SearchApiClient(collection=self.DEFAULT_COLLECTION, api_base_url=self._base_url)
         return api_client
 
     @classmethod

@@ -4,11 +4,8 @@ import itertools
 import random
 import copy
 import mediacloud.api
-import mediacloud_legacy.api
-import mediacloud_legacy.tags
 import os
-from ..onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudProvider,\
-    OnlineNewsMediaCloudLegacyProvider
+from ..onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudProvider
 
 LEGACY_MEDIA_CLOUD_API_KEY = os.getenv('LEGACY_MEDIA_CLOUD_API_KEY', None)
 MEDIA_CLOUD_API_KEY = os.getenv('MEDIA_CLOUD_API_KEY', None)
@@ -227,16 +224,15 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
         assert True
     
     def test_overlarge_count_over_time(self):
-        base_query = "technology"
-        startdate = dt.datetime(2023, 11, 1)
-        enddate = dt.datetime(2023, 12, 1)
+        startdate = dt.datetime(2023, 12, 1)
+        enddate = dt.datetime(2023, 12, 3)
 
-        results = self._provider.count_over_time(base_query, startdate, enddate, domains=self.DOMAINS_OVER_LIMIT)
+        results = self._provider.count_over_time('*', startdate, enddate, domains=self.DOMAINS_OVER_LIMIT)
         
-        assert len(results["counts"]) == 31
+        assert len(results["counts"]) == 3
         
-        results_shuffled = self._provider.count_over_time(base_query, startdate, enddate, domains=self.DOL_SHUFFLED())
-        assert len(results_shuffled["counts"]) == 31 
+        results_shuffled = self._provider.count_over_time('*', startdate, enddate, domains=self.DOL_SHUFFLED())
+        assert len(results_shuffled["counts"]) == 3
         
         r_counts = [r["count"] for r in results["counts"]]
         shuffled_counts = [r["count"] for r in results_shuffled["counts"]]
@@ -245,14 +241,13 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
         assert results_shuffled == results 
         
     def test_overlarge_count(self):
-        base_query = "technology"
         startdate = dt.datetime(2023, 1, 1)
         enddate = dt.datetime(2023, 12, 1)
 
-        results = self._provider.count(base_query, startdate, enddate, domains=self.DOMAINS_OVER_LIMIT)
+        results = self._provider.count('*', startdate, enddate, domains=self.DOMAINS_OVER_LIMIT)
         assert results > 20000
         
-        results_shuffled = self._provider.count(base_query, startdate, enddate, domains=self.DOL_SHUFFLED())
+        results_shuffled = self._provider.count('*', startdate, enddate, domains=self.DOL_SHUFFLED())
         assert results_shuffled == results
 
     def test_overlarge_sample(self):
@@ -372,8 +367,7 @@ class OnlineNewsMediaCloudLegacyProviderTest(unittest.TestCase):
 class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
 
     def setUp(self):
-        self._provider = OnlineNewsMediaCloudProvider()
-        #self._provider._client.API_BASE_URL = "http://localhost:8020/v1/"
+        self._provider = OnlineNewsMediaCloudProvider("http://localhost:8010/v1/")
 
     def test_expanded_story_list(self):
         query = "*"
