@@ -3,6 +3,7 @@ import datetime as dt
 import itertools
 import random
 import copy
+import pytest
 import mediacloud.api
 import os
 
@@ -11,6 +12,8 @@ from ..onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudP
 
 LEGACY_MEDIA_CLOUD_API_KEY = os.getenv('LEGACY_MEDIA_CLOUD_API_KEY', None)
 MEDIA_CLOUD_API_KEY = os.getenv('MEDIA_CLOUD_API_KEY', None)
+
+IN_GITHUB_CI_WORKFLOW = os.getenv("GITHUB_ACTIONS") == "true"
 
 
 class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
@@ -366,6 +369,7 @@ class OnlineNewsMediaCloudLegacyProviderTest(unittest.TestCase):
 '''
 
 
+@pytest.mark.skipif(IN_GITHUB_CI_WORKFLOW, reason="requires VPN tunnel to Media Cloud")
 class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
 
     def setUp(self):
