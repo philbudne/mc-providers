@@ -18,15 +18,14 @@ classifiers = [
     "Programming Language :: Python :: 3.9",
 ]
 dependencies = [
-    "pyhumps == 3.8.*",
-    "python-dateutil == 2.8.*",
-    "dateparser == 1.1.*",
+    "python-dateutil == 2.*",
+    "dateparser",
     "requests",
-    "wayback-news-search == 1.2.*",
+    "wayback-news-search == 1.*",
     "fasttext == 0.9.*",
-    "mediacloud-metadata",
-    "mediacloud",
+    "mediacloud-metadata >= 0.11.1",
     "mediacloud-api-legacy",
+    "mediacloud == 4.*"
 ]
 
 [tool.flit.sdist]

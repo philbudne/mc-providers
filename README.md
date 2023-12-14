@@ -16,11 +16,10 @@ Requires environment variables set for various interfaces to work correctly.
 Make sure `pip install flit twine` so you can build and deploy to PyPI.
 
 1. Bump the version number in `pyproject.toml`
-2. Run `flit build` to create an installation package
-3. Add a note about changes to the version history below
-4. Commit the changes and tag it with a semantic version number
-5. Run `twine upload --repository-url https://test.pypi.org/legacy/ dist/*` to upload it to PyPI's test platform
-6. Run `twine upload dist/*` to upload it to PyPI
+2. Add a note about changes to the version history below
+3. Commit the changes and tag it with a semantic version number
+4. Run `flit build` to create an installation package
+5. Run `flit publish` to upload it to PyPI
 
 ### Version History
 * __v0.4.0__ - Specify custom base URLs via new string param to `provider_by_name` and `provider_for` 
