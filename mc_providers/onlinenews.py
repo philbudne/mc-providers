@@ -356,14 +356,14 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     @classmethod
     def _match_to_row(cls, match: Dict) -> Dict:
         story_info = {
+            'id': hashlib.sha256(match['url'].encode("utf-8")).hexdigest(),
             'media_name': match['canonical_domain'],
             'media_url': match['canonical_domain'],
-            'id': hashlib.md5(match['normalized_url'].encode('utf8')).hexdigest(),
             'title': match['article_title'],
-            'publish_date': dateparser.parse(match['publication_date']),
+            'publish_date': dateparser.parse(match['publication_date']).date(),
             'url': match['url'],
             'language': match['language'],
-            'indexed_date': dateparser.parse(match['publication_date']),
+            'indexed_date': dateparser.parse(match['indexed_date']),
         }
         if 'text_content' in match:
             story_info['text'] = match['text_content']

@@ -5,6 +5,8 @@ import random
 import copy
 import mediacloud.api
 import os
+
+from mc_providers import provider_for, PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD
 from ..onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudProvider
 
 LEGACY_MEDIA_CLOUD_API_KEY = os.getenv('LEGACY_MEDIA_CLOUD_API_KEY', None)
@@ -367,7 +369,10 @@ class OnlineNewsMediaCloudLegacyProviderTest(unittest.TestCase):
 class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
 
     def setUp(self):
-        self._provider = OnlineNewsMediaCloudProvider("http://localhost:8010/v1/")
+        #self._provider = OnlineNewsMediaCloudProvider("http://localhost:8010/v1/")
+        # this requires having a VPN tunnel open to the MEdia c
+        self._provider = provider_for(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD, None,
+                                     "http://localhost:8010/v1/")
 
     def test_expanded_story_list(self):
         query = "*"
@@ -379,6 +384,20 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
             assert "id" in story
             assert "text" in story
             assert len(story['text']) > 0
+
+    def test_date_formats(self):
+        query = "biden"
+        start_date = dt.datetime(2023, 11, 25)
+        end_date = dt.datetime(2023, 11, 26)
+        page1, next_token1 = self._provider.paged_items(query, start_date, end_date)
+        for story in page1:
+            assert "publish_date" in story
+            assert story['publish_date'] is not None
+            assert isinstance(story['publish_date'], dt.date)
+            assert "indexed_date" in story
+            assert story['indexed_date'] is not None
+            assert isinstance(story['indexed_date'], dt.datetime)
+
 
     def test_paged_items(self):
         query = "biden"
