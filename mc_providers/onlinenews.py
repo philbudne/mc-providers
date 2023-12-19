@@ -333,9 +333,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     """
     Provider interface to access new mediacloud-news-search archive. 
     All these endpoints accept a `domains: List[str]` keyword arg.
-    For now we just use the wayback client, but eventually we'll have our own fork
     """
-    #DEFAULT_API_BASE_URL = "https://news-search-api.mediacloud.org/v1/"
+    
     DEFAULT_COLLECTION = "mediacloud_search_text_*"
 
     def __init__(self, base_url=Optional[str]):
