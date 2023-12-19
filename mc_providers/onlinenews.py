@@ -341,7 +341,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         super().__init__(base_url)
 
     def get_client(self):
-        api_client = MCSearchApiClient(collection=self.DEFAULT_COLLECTION)
+        api_client = MCSearchApiClient(collection=self.DEFAULT_COLLECTION, api_base_url=self._base_url)
         return api_client
 
     @classmethod
