@@ -1,6 +1,6 @@
 [project]
 name = "mc-providers"
-version = "0.4.0"
+version = "0.5.0"
 authors = [
     {name = "Paige Gulley", email = "nano3.14@gmail.com"},
     {name = "Rahul Bhargava", email = "r.bhargava@northeastern.edu"},
