@@ -6,6 +6,7 @@ import logging
 import numpy as np
 import random
 from waybacknews.searchapi import SearchApiClient
+from mcnews.searchapi import SearchApiClient as MCSearchApiClient
 from mediacloud_legacy.api import MediaCloud
 import mcmetadata
 from collections import Counter
@@ -332,17 +333,15 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     """
     Provider interface to access new mediacloud-news-search archive. 
     All these endpoints accept a `domains: List[str]` keyword arg.
-    For now we just use the wayback client, but eventually we'll have our own fork
     """
-    DEFAULT_API_BASE_URL = "https://news-search-api.mediacloud.org/v1/"
+    
     DEFAULT_COLLECTION = "mediacloud_search_text_*"
 
     def __init__(self, base_url=Optional[str]):
         super().__init__(base_url)
 
     def get_client(self):
-        #This seems cleaner than having a whole parallel client library
-        api_client = SearchApiClient(collection=self.DEFAULT_COLLECTION, api_base_url=self._base_url)
+        api_client = MCSearchApiClient(collection=self.DEFAULT_COLLECTION, api_base_url=self._base_url)
         return api_client
 
     @classmethod
