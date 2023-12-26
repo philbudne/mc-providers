@@ -92,11 +92,12 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
     def paged_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs)\
             -> tuple[List[Dict], str] :
-        '''
+        """
         Note - this is not chunk'd so you can't run giant queries page by page... use `all_items` instead.
         This kwargs should include `pagination_token`, which will get relayed in to the api client and fetch
         the right page of results.
-        '''
+        """
+        query = self._assemble_and_chunk_query_str(query, chunk=False, **kwargs)[0]
         page, pagination_token = self._client.paged_articles(query, start_date, end_date, **kwargs)
         return self._matches_to_rows(page), pagination_token
 
@@ -186,7 +187,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return cleaned_sources
 
     @classmethod
-    def _assemble_and_chunk_query_str(cls, base_query: str, **kwargs) :
+    def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs):
         """
         If a query string is too long, we can attempt to run it anyway by splitting the domain substring (which is guaranteed 
         too be only a sequence of ANDs) into parts, to produce multiple smaller queries which are collectively equivalent 
@@ -203,7 +204,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
         filters = kwargs.get('filters', [])
         
-        if len(base_query) > cls.MAX_QUERY_LENGTH:
+        if chunk and (len(base_query) > cls.MAX_QUERY_LENGTH):
             ##of course there still is the possibility that the base query is too large, which 
             #cannot be fixed by this method
             raise RuntimeError(f"Base Query cannot exceed {cls.MAX_QUERY_LENGTH} characters")
@@ -217,7 +218,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
             domain_divisor = 2
 
-            if domain_queries_too_big:
+            if chunk and domain_queries_too_big:
                 while domain_queries_too_big:
                     chunked_domains = np.array_split(domains, domain_divisor)
                     domain_queries = [cls._assembled_query_str(base_query, domains=dom) for dom in chunked_domains]
@@ -231,7 +232,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
             filter_queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in filter_queries])
 
             filter_divisor = 2
-            if filter_queries_too_big:
+            if chunk and filter_queries_too_big:
                 while filter_queries_too_big:
                     chunked_filters = np.array_split(filters, filter_divisor)
                     filter_queries = [cls._assembled_query_str(base_query, filters=filt) for filt in chunked_filters]
