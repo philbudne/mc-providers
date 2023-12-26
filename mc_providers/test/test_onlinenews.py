@@ -6,6 +6,7 @@ import copy
 import pytest
 import mediacloud.api
 import os
+from typing import List
 
 from mc_providers import provider_for, PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD
 from ..onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudProvider
@@ -141,9 +142,7 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
         last_count = 99999999999
         last_ratio = 1
         assert len(results) > 0
-        print(results)
         for item in results:
-            print(item)
             assert len(item['language']) == 2
             assert last_count >= item['value']
             last_count = item['value']
@@ -402,7 +401,6 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
             assert story['indexed_date'] is not None
             assert isinstance(story['indexed_date'], dt.datetime)
 
-
     def test_paged_items(self):
         query = "biden"
         start_date = dt.datetime(2020, 1, 1)
@@ -422,3 +420,18 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         assert next_token1 != next_token2  # verify paging token changed
         page2_urls = [s['url'] for s in page2]
         assert page1_url1 not in page2_urls  # verify pages don't overlap
+
+    def _test_domain_filters(self, domains: List[str]):
+        query = "biden"
+        start_date = dt.datetime(2023, 11, 1)
+        end_date = dt.datetime(2023, 12, 1)
+        page1, _ = self._provider.paged_items(query, start_date, end_date, domains=domains)
+        assert len(page1) > 0
+        for story in page1:
+            assert "url" in story
+            assert story['media_name'] in domains
+            assert story['media_url'] in domains
+
+    def test_domain_filter(self):
+        self._test_domain_filters(["cnn.com"])
+        self._test_domain_filters(["cnn.com", "foxnews.com"])
