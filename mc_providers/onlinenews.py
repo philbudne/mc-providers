@@ -97,7 +97,8 @@ class OnlineNewsAbstractProvider(ContentProvider):
         This kwargs should include `pagination_token`, which will get relayed in to the api client and fetch
         the right page of results.
         """
-        query = self._assemble_and_chunk_query_str(query, chunk=False, **kwargs)[0]
+        updated_kwargs = {**kwargs, 'chunk': False}
+        query = self._assemble_and_chunk_query_str(query, **updated_kwargs)[0]
         page, pagination_token = self._client.paged_articles(query, start_date, end_date, **kwargs)
         return self._matches_to_rows(page), pagination_token
 
