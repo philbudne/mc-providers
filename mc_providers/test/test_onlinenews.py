@@ -381,7 +381,7 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         query = "*"
         start_date = dt.datetime(2020, 1, 1)
         end_date = dt.datetime(2023, 12, 1)
-        page1, next_token1 = self._provider.paged_items(query, start_date, end_date, expanded=True)
+        page1, next_token1 = self._provider.paged_items(query, start_date, end_date, expanded=True, chunk=False)
         assert len(page1) > 0
         for story in page1:
             assert "id" in story
@@ -392,7 +392,7 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         query = "biden"
         start_date = dt.datetime(2023, 11, 25)
         end_date = dt.datetime(2023, 11, 26)
-        page1, next_token1 = self._provider.paged_items(query, start_date, end_date)
+        page1, next_token1 = self._provider.paged_items(query, start_date, end_date, chunk=False)
         for story in page1:
             assert "publish_date" in story
             assert story['publish_date'] is not None
@@ -405,16 +405,17 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         query = "biden"
         start_date = dt.datetime(2020, 1, 1)
         end_date = dt.datetime(2023, 12, 1)
-        story_count = self._provider.count(query, start_date, end_date)
+        story_count = self._provider.count(query, start_date, end_date, chunk=False)
         # make sure test case is reasonable size (ie. more than one page, but not too many pages
         assert story_count > 1000
         # fetch first page
-        page1, next_token1 = self._provider.paged_items(query, start_date, end_date)
+        page1, next_token1 = self._provider.paged_items(query, start_date, end_date, chunk=False)
         assert len(page1) > 0
         assert next_token1 is not None
         page1_url1 = page1[0]['url']
         # grab token, fetch next page
-        page2, next_token2 = self._provider.paged_items(query, start_date, end_date, pagination_token=next_token1)
+        page2, next_token2 = self._provider.paged_items(query, start_date, end_date, chunk=False,
+                                                        pagination_token=next_token1)
         assert len(page2) > 0
         assert next_token2 is not None
         assert next_token1 != next_token2  # verify paging token changed
@@ -425,7 +426,7 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         query = "biden"
         start_date = dt.datetime(2023, 11, 1)
         end_date = dt.datetime(2023, 12, 1)
-        page1, _ = self._provider.paged_items(query, start_date, end_date, domains=domains)
+        page1, _ = self._provider.paged_items(query, start_date, end_date, domains=domains, chunk=False)
         assert len(page1) > 0
         for story in page1:
             assert "url" in story
