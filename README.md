@@ -22,6 +22,7 @@ Make sure `pip install flit twine` so you can build and deploy to PyPI.
 5. Run `flit publish` to upload it to PyPI
 
 ### Version History
+* __v0.5.2__ - Fix to allow override of chunk'ing in MC client 
 * __v0.5.1__ - Fix use of media cloud to respect domains clause on story list paging
 * __v0.5.0__ - Integrate new mediacloud-news-client into onlinenews-mediacloud
 * __v0.4.0__ - Specify custom base URLs via new string param to `provider_by_name` and `provider_for` 
