@@ -337,7 +337,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
     
-    DEFAULT_COLLECTION = "mediacloud_search_text_*"
+    DEFAULT_COLLECTION = "mc_search"
 
     def __init__(self, base_url=Optional[str]):
         super().__init__(base_url)
@@ -357,7 +357,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     @classmethod
     def _match_to_row(cls, match: Dict) -> Dict:
         story_info = {
-            'id': hashlib.sha256(match['url'].encode("utf-8")).hexdigest(),
+            'id': match['id'],
             'media_name': match['canonical_domain'],
             'media_url': match['canonical_domain'],
             'title': match['article_title'],
