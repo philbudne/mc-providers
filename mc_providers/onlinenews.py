@@ -337,7 +337,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
     
-    DEFAULT_COLLECTION = "mc_search"
+    DEFAULT_COLLECTION = "mc_search-000001"
 
     def __init__(self, base_url=Optional[str]):
         super().__init__(base_url)
