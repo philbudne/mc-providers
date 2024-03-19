@@ -85,7 +85,8 @@ class ContentProvider(ABC):
             'normalized_total': no_query_total,
         }
 
-    def _sum_count_by_date(self, counts: List[Dict]) -> List[Dict]:
+    @classmethod
+    def _sum_count_by_date(cls, counts: List[Dict]) -> List[Dict]:
         """
         Given a list of counts, sum the counts by date
         :param counts:
@@ -106,7 +107,6 @@ class ContentProvider(ABC):
         """
         return '*'
 
-   
     # use this if you need to sample some content for top languages
     def _sampled_languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
                                **kwargs) -> List[Dict]:
@@ -122,7 +122,6 @@ class ContentProvider(ABC):
         results = [dict(language=w, count=c, ratio=c/sampled_count) for w, c in counts.most_common()]
         return results[:limit]
 
-    
     # use this if you need to sample some content for top words
     def _sampled_title_words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                              **kwargs) -> List[Dict]:

@@ -55,7 +55,7 @@ class YouTubeYouTubeProviderTest(unittest.TestCase):
         assert isinstance(results, list) is True
 
     def test_all_items(self):
-        ###Something about this query is not deterministic- result ranges +-10 from 280, leading to failures
+        # Something about this query is not deterministic- result ranges +-10 from 280, leading to failures
         page_count = 0
         total_items = 0
         for page in self._provider.all_items("cultural marxism", start_date=dt.datetime(2023, 1, 1),
@@ -74,4 +74,4 @@ class YouTubeYouTubeProviderTest(unittest.TestCase):
             page_count += 1
         assert page_count > 1
         assert total_items > 0
-        #assert abs(total_items - 280) < 10  #since there seems to be some fuzziness, and I want to supress the error.
+        # assert abs(total_items - 280) < 10  #since there seems to be some fuzziness, and I want to supress the error.
