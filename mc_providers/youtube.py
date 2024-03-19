@@ -13,11 +13,13 @@ YT_DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 YT_SEARCH_API_URL = 'https://www.googleapis.com/youtube/v3/search'
 
-#YT_SEARCH_API_URL = 'https://content-youtube.googleapis.com/youtube/v3/search'
+# YT_SEARCH_API_URL = 'https://content-youtube.googleapis.com/youtube/v3/search'
 YT_SEARCH_HEADERS = {
     "x-origin": "https://explorer.apis.google.com",
     "x-referer": "https://explorer.apis.google.com",
 }
+
+DEFAULT_TIMEOUT = 60
 
 
 class YouTubeYouTubeProvider(ContentProvider):
@@ -25,10 +27,12 @@ class YouTubeYouTubeProvider(ContentProvider):
     Get matching YouTube videos
     """
 
-    def __init__(self, api_key):
+    def __init__(self, api_key: str, timeout: int = None):
         super(YouTubeYouTubeProvider, self).__init__()
         self._logger = logging.getLogger(__name__)
         self._api_key = api_key
+        self._timeout = timeout or DEFAULT_TIMEOUT
+        self._session = requests.Session()  # better performance to put all HTTP through this one object
 
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
         raise UnsupportedOperationException("The YouTube API doesn't support counts over time")
@@ -137,7 +141,7 @@ class YouTubeYouTubeProvider(ContentProvider):
             'order': order,
             'pageToken': page_token,
         }
-        response = requests.get(YT_SEARCH_API_URL, headers=YT_SEARCH_HEADERS, params=params)
+        response = self._session.get(YT_SEARCH_API_URL, headers=YT_SEARCH_HEADERS, params=params, timeout=self._timeout)
         return response.json()
 
     def __repr__(self):

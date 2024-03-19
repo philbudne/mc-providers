@@ -15,6 +15,7 @@ from .language import top_detected
 
 TWITTER_API_URL = 'https://api.twitter.com/2/'
 TWITTER_DATE_FORMAT = '%Y-%m-%dT%H:%M:%S.%f%z'
+DEFAULT_TIMEOUT = 60
 
 
 @deprecated
@@ -23,14 +24,15 @@ class TwitterTwitterProvider(ContentProvider):
     All these endpoints accept a `usernames: List[str]` keyword arg.
     """
     
-    MAX_QUERY_LENGTH = 1024 #I think?
-    POLITENESS_DELAY = 1 #sleep for half a second if we're gonna spam a bunch of queries
+    MAX_QUERY_LENGTH = 1024  # I think?
+    POLITENESS_DELAY = 1  # sleep for half a second if we're gonna spam a bunch of queries
     
-    def __init__(self, bearer_token=None):
+    def __init__(self, bearer_token=None, timeout=None):
         super(TwitterTwitterProvider, self).__init__()
         self._logger = logging.getLogger(__name__)
         self._bearer_token = bearer_token
         self._session = requests.Session()  # better performance to put all HTTP through this one object
+        self._timeout = timeout or DEFAULT_TIMEOUT
 
     #Chunk'd
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10, **kwargs) -> List[Dict]:
@@ -76,7 +78,7 @@ class TwitterTwitterProvider(ContentProvider):
             assembled_query = query + " (" + " OR ".join(["from:{}".format(name) for name in usernames]) + ")"
         # check if query too long
         # @see https://developer.twitter.com/en/docs/twitter-api/tweets/search/api-reference/get-tweets-search-all
-        #if len(assembled_query) > 1024:
+        # if len(assembled_query) > 1024:
         #    raise RuntimeError("Twitter's max query length is 1024 characters - your query is {} characters. "
         #                       "Try changing collections.".format(len(assembled_query)))
         return assembled_query
@@ -85,15 +87,15 @@ class TwitterTwitterProvider(ContentProvider):
     @classmethod
     def _assemble_and_chunk_query_str(cls, base_query: str, **kwargs) -> List:
         """
-        If a query string is too long, we can attempt to run it anyway by splitting the domain substring (which is guaranteed 
-        too be only a sequence of ANDs) into parts, to produce multiple smaller queries which are collectively equivalent 
-        to the original. 
+        If a query string is too long, we can attempt to run it anyway by splitting the domain substring (which is
+        guaranteed to be only a sequence of ANDs) into parts, to produce multiple smaller queries which are
+        collectively equivalent to the original.
         """
         usernames = kwargs.get('usernames', [])
         
         if len(base_query) > cls.MAX_QUERY_LENGTH:
-            ##of course there still is the possibility that the base query is too large, which 
-            #cannot be fixed by this method
+            # of course there still is the possibility that the base query is too large, which
+            # cannot be fixed by this method
             raise RuntimeError(f"Base Query cannot exceed {cls.MAX_QUERY_LENGTH} characters")
         
         queries = [cls._assembled_query_str(base_query, usernames=usernames)]
@@ -109,13 +111,13 @@ class TwitterTwitterProvider(ContentProvider):
             
         return queries
     
-    #No need to chunk
+    # No need to chunk
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
         results = self.count_over_time(query, start_date, end_date, **kwargs)  # use the cached counts being made already
         total = sum([r['count'] for r in results['counts']])
         return total
     
-    #Chunk
+    # Chunk
     def count_over_time(self, query: str, start_date: dt.datetime,
                         end_date: dt.datetime,
                         **kwargs) -> Dict:
@@ -164,7 +166,7 @@ class TwitterTwitterProvider(ContentProvider):
             })
         return {'counts': to_return}
 
-    #Chunk'd
+    # Chunk'd
     def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 500,
                   **kwargs):
         
@@ -197,12 +199,12 @@ class TwitterTwitterProvider(ContentProvider):
             
             sleep(self.POLITENESS_DELAY)
     
-    #sampled_languages just relies on all_items, so if all_items is chunked then we get this for free
+    # sampled_languages just relies on all_items, so if all_items is chunked then we get this for free
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10, **kwargs) -> List[Dict]:
         # use the helper because we need to sample from most recent tweets
         return self._sampled_languages(query, start_date, end_date, limit, **kwargs)
     
-    #same as languages
+    # same as languages
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
               **kwargs) -> List[Dict]:
         # use the helper because we need to sample from most recent tweets
@@ -221,7 +223,7 @@ class TwitterTwitterProvider(ContentProvider):
             'Content-type': 'application/json',
             'Authorization': "Bearer {}".format(self._bearer_token)
         }
-        r = self._session.get(TWITTER_API_URL+endpoint, headers=headers, params=params)
+        r = self._session.get(TWITTER_API_URL+endpoint, headers=headers, params=params, timeout=self._timeout)
         if r.status_code != 200:
             try:
                 raise RuntimeError(r.json()['title'])
@@ -248,7 +250,6 @@ class TwitterTwitterProvider(ContentProvider):
     @classmethod
     def _no_results(self, results):
         return results['meta']['result_count'] == 0
-
 
     @classmethod
     def _tweet_to_row(cls, item: Dict) -> Dict:

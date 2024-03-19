@@ -1,17 +1,13 @@
 import datetime as dt
 from typing import List, Dict, Optional
 import dateparser
-import hashlib
 import logging
 import numpy as np
 import random
 from waybacknews.searchapi import SearchApiClient
 from mcnews.searchapi import SearchApiClient as MCSearchApiClient
-from mediacloud_legacy.api import MediaCloud
-import mcmetadata
 from collections import Counter
 
-from .errors import deprecated
 from .language import stopwords_for_language
 from .provider import ContentProvider
 from .cache import CachingManager
@@ -24,10 +20,11 @@ class OnlineNewsAbstractProvider(ContentProvider):
     
     MAX_QUERY_LENGTH = pow(2, 14)
 
-    def __init__(self, base_url: Optional[str]):
+    def __init__(self, base_url: Optional[str], timeout: int = None):
         super().__init__()
         self._logger = logging.getLogger(__name__)
         self._base_url = base_url
+        self._timeout = timeout
         self._client = self.get_client()
 
     def get_client(self):
@@ -40,8 +37,8 @@ class OnlineNewsAbstractProvider(ContentProvider):
     def everything_query(self) -> str:
         return '*'
 
-    #Chunk'd
-    #NB: it looks like the limit keyword here doesn't ever get passed into the query- something's missing here. 
+    # Chunk'd
+    # NB: it looks like the limit keyword here doesn't ever get passed into the query - something's missing here.
     @CachingManager.cache()
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
                **kwargs) -> List[Dict]:
@@ -50,12 +47,12 @@ class OnlineNewsAbstractProvider(ContentProvider):
             this_results = self._client.sample(subquery, start_date, end_date, **kwargs)
             results.extend(this_results)
         
-        if(len(results) > limit):
+        if len(results) > limit:
             results = random.sample(results, limit)
             
         return self._matches_to_rows(results)
 
-    #Chunk'd
+    # Chunk'd
     @CachingManager.cache()
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
         count = 0
@@ -63,7 +60,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
             count += self._client.count(subquery, start_date, end_date, **kwargs)
         return count
 
-    #Chunk'd
+    # Chunk'd
     @CachingManager.cache()
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
         
@@ -75,7 +72,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         
         counter_dict = dict(counter)
         results = [{"date":date, "timestamp":date.timestamp(), "count":count} for date, count in counter_dict.items()]
-        #Somehow the order of this list gets out of wack. Sorting before returning for the sake of testability
+        # Somehow the order of this list gets out of wack. Sorting before returning for the sake of testability
         sorted_results = sorted(results, key = lambda x: x["timestamp"]) 
         return {'counts': sorted_results}
 
@@ -84,7 +81,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     def item(self, item_id: str) -> Dict:
         return self._client.article(item_id)
     
-    #Chunk'd
+    # Chunk'd
     def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs):
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
             for page in self._client.all_articles(subquery, start_date, end_date, **kwargs):
@@ -102,19 +99,17 @@ class OnlineNewsAbstractProvider(ContentProvider):
         page, pagination_token = self._client.paged_articles(query, start_date, end_date, **kwargs)
         return self._matches_to_rows(page), pagination_token
 
-    #Chunk'd
+    # Chunk'd
     @CachingManager.cache()
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
               **kwargs) -> List[Dict]:
         
         chunked_queries = self._assemble_and_chunk_query_str(query, **kwargs)
-        
-        
+
         # first figure out the dominant languages, so we can remove appropriate stopwords.
         # This method does chunking for you, so just pass the query 
         top_languages = self.languages(query, start_date, end_date, limit=100, **kwargs) 
-        
-        
+
         represented_languages = [i['language'] for i in top_languages if i['ratio'] > 0.1]
         stopwords = []
         for lang in represented_languages:
@@ -126,7 +121,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         # for now just return top terms in article titles
         sample_size = 5000
         
-        #An accumulator for the subqueries
+        # An accumulator for the subqueries
         results_counter = Counter({})
         for subquery in chunked_queries:
             this_results = self._client.terms(subquery, start_date, end_date,
@@ -143,20 +138,19 @@ class OnlineNewsAbstractProvider(ContentProvider):
         top_terms = sorted(top_terms, key=lambda x:x["count"], reverse=True)
         return top_terms
 
-    #Chunk'd
+    # Chunk'd
     @CachingManager.cache()
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
                   **kwargs) -> List[Dict]:
         
         matching_count = self.count(query, start_date, end_date, **kwargs)
-        
-        
+
         results_counter = Counter({})
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs) :   
             this_languages = self._client.top_languages(subquery, start_date, end_date, **kwargs)
             countable = {item["name"]:item["value"] for item in this_languages}
             results_counter += Counter(countable)
-            #top_languages.extend(this_languages)
+            # top_languages.extend(this_languages)
         
         all_results = dict(results_counter)
         
@@ -165,53 +159,50 @@ class OnlineNewsAbstractProvider(ContentProvider):
         for item in top_languages:
             item['ratio'] = item['value'] / matching_count
         
-        #Sort by count, then alphabetically
-        top_languages = sorted(top_languages, key=lambda x:x['value'], reverse=True)
+        # Sort by count, then alphabetically
+        top_languages = sorted(top_languages, key=lambda x: x['value'], reverse=True)
         return top_languages[:limit]
 
-    #Chunk'd
+    # Chunk'd
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                 **kwargs) -> List[Dict]:
         
-        #all_results = []
+        # all_results = []
         
         results_counter = Counter({})
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
             results = self._client.top_sources(subquery, start_date, end_date)
             countable = {source['name']:source['value'] for source in results}
             results_counter += Counter(countable)
-            #all_results.extend(results)
+            # all_results.extend(results)
         
         all_results = dict(results_counter)
-        cleaned_sources = [{"source":source , "count":count} for source, count in all_results.items()]
+        cleaned_sources = [{"source": source , "count": count} for source, count in all_results.items()]
         cleaned_sources = sorted(cleaned_sources, key= lambda x: x['count'], reverse=True)
         return cleaned_sources
 
     @classmethod
     def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs):
         """
-        If a query string is too long, we can attempt to run it anyway by splitting the domain substring (which is guaranteed 
-        too be only a sequence of ANDs) into parts, to produce multiple smaller queries which are collectively equivalent 
-        to the original. 
-        
-        
-        Because we have this chunking thing implimented, and the filter behavior never interacts with the domain search behavior,
-        we can just put the two different search fields into two different sets of behavior at the top. Theres obvi room to optimize,
-        but this gets the done job.
+        If a query string is too long, we can attempt to run it anyway by splitting the domain substring (which is
+        guaranteed to be only a sequence of ANDs) into parts, to produce multiple smaller queries which are collectively
+        equivalent to the original.
+
+        Because we have this chunking thing implemented, and the filter behavior never interacts with the domain search
+        behavior, we can just put the two different search fields into two different sets of behavior at the top.
+        There's obvious room to optimize, but this gets the done job.
         """
-        
         
         domains = kwargs.get('domains', [])
 
         filters = kwargs.get('filters', [])
         
         if chunk and (len(base_query) > cls.MAX_QUERY_LENGTH):
-            ##of course there still is the possibility that the base query is too large, which 
-            #cannot be fixed by this method
+            # of course there still is the possibility that the base query is too large, which
+            # cannot be fixed by this method
             raise RuntimeError(f"Base Query cannot exceed {cls.MAX_QUERY_LENGTH} characters")
-        
 
-        #Get Domain Queries
+        # Get Domain Queries
         domain_queries = []
         if len(domains) > 0:
             domain_queries = [cls._assembled_query_str(base_query, domains=domains)]
@@ -226,7 +217,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
                     domain_queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in domain_queries])
                     domain_divisor *= 2
                 
-        #Then Get Filter Queries
+        # Then Get Filter Queries
         filter_queries = []
         if len(filters) > 0:
             filter_queries = [cls._assembled_query_str(base_query, filters=filters)]
@@ -240,8 +231,8 @@ class OnlineNewsAbstractProvider(ContentProvider):
                     filter_queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in filter_queries])
                     filter_divisor *= 2
             
-        #There's a (probably not uncommon) edge case where we're searching against no collections at all,
-        #so just do it manually here. 
+        # There's a (probably not uncommon) edge case where we're searching against no collections at all,
+        # so just do it manually here.
         if len(domain_queries) == 0 and len(filter_queries) == 0:
             queries = [cls._assembled_query_str(base_query)]
         
@@ -269,7 +260,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         # need to put all those filters in single query string
         q = query
         
-        if( (len(domains) > 0) and (len(filters) > 0) ):
+        if (len(domains) > 0) and (len(filters) > 0) :
             q += f" AND (({domain_clause}) OR ({filter_clause}))"
         
         elif len(domains) > 0:
@@ -278,7 +269,6 @@ class OnlineNewsAbstractProvider(ContentProvider):
         elif len(filters) > 0:
             q += f" AND ({filter_clause})"
         return q
-
 
     @classmethod
     def _matches_to_rows(cls, matches: List) -> List:
@@ -298,11 +288,14 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
 
-    def __init__(self, base_url: Optional[str] = None):
-        super().__init__(base_url)
+    def __init__(self, base_url: Optional[str] = None, timeout: int = None):
+        super().__init__(base_url, timeout)  # will call get_client
 
     def get_client(self):
-        return SearchApiClient("mediacloud", self._base_url)
+        client = SearchApiClient("mediacloud", self._base_url)
+        if self._timeout:
+            client.TIMEOUT_SECS = self._timeout
+        return client
 
     @classmethod
     def domain_search_string(cls):
@@ -339,11 +332,13 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     
     DEFAULT_COLLECTION = "mc_search-000001"
 
-    def __init__(self, base_url=Optional[str]):
-        super().__init__(base_url)
+    def __init__(self, base_url=Optional[str], timeout: int = None):
+        super().__init__(base_url, timeout)
 
     def get_client(self):
         api_client = MCSearchApiClient(collection=self.DEFAULT_COLLECTION, api_base_url=self._base_url)
+        if self._timeout:
+            api_client.TIMEOUT_SECS = self._timeout
         return api_client
 
     @classmethod
@@ -372,174 +367,3 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
     def __repr__(self):
         return "OnlineNewsMediaCloudProvider"
-
-
-@deprecated
-class OnlineNewsMediaCloudLegacyProvider(ContentProvider):
-    """
-    Media Cloud is a platform for analyzing news media. It is a free, open-source platform for
-    collecting, analyzing, and visualizing news media content. It is a project of the MIT Media
-    Lab and the Berkman Klein Center for Internet & Society at Harvard University.
-
-    This provider uses the Media Cloud API to search for articles. It is a wrapper around the
-    Media Cloud Python client library, which is available here:
-    """
-
-    def __init__(self, api_key):
-        super().__init__()
-        self._logger = logging.getLogger(__name__)
-        self._api_key = api_key
-        self._mc_client = MediaCloud(api_key)
-        self._mc_client.TIMEOUT_SECS = 300  # give backend 5 mins to responsd
-
-    def everything_query(self) -> str:
-        return '*'
-
-    @CachingManager.cache()
-    def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
-               **kwargs) -> List[Dict]:
-        """
-        Return a list of stories matching the query.
-        :param query:
-        :param start_date:
-        :param end_date:
-        :param limit:
-        :param kwargs: sources and collections lists
-        :return:
-        """
-        q, fq = self._format_query(query, start_date, end_date, **kwargs)
-        story_list = self._mc_client.storyList(q, fq, rows=limit)
-        return self._matches_to_rows(story_list)
-
-    @CachingManager.cache()
-    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
-        """
-        Count how many verified tweets match the query.
-        :param query:
-        :param start_date:
-        :param end_date:
-        :param kwargs: sources and collections lists
-        :return:
-        """
-        q, fq = self._format_query(query, start_date, end_date, **kwargs)
-        story_count_result = self._mc_client.storyCount(q, fq)
-        return story_count_result['count']
-
-    @CachingManager.cache()
-    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> List[Dict]:
-        """
-        How many verified tweets over time match the query.
-        :param query:
-        :param start_date:
-        :param end_date:
-        :param kwargs: sources and collections lists
-        :return:
-        """
-        q, fq = self._format_query(query, start_date, end_date, **kwargs)
-        story_count_result = self._mc_client.storyCount(q, fq, split=True)
-        return story_count_result
-
-    @CachingManager.cache()
-    def item(self, item_id: str) -> Dict:
-        story = self._mc_client.story(item_id)
-        return self._match_to_row(story)
-
-    def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs):
-        q, fq = self._format_query(query, start_date, end_date, **kwargs)
-        last_id = 0
-        more_stories = True
-        stories = []
-        while more_stories:
-            page = self._matching_page(q, fq, last_processed_stories_id=last_id, page_size=page_size,
-                                       sort='processed_stories_id')
-            yield page
-            if len(page) == 0:
-                more_stories = False
-            else:
-                stories += page
-                last_id = page[-1]['processed_stories_id']
-
-    @CachingManager.cache()
-    def _matching_page(self, q: str, fq: str, last_processed_stories_id: str, page_size: int, sort: str):
-        page = self._mc_client.storyList(q, fq, last_processed_stories_id=last_processed_stories_id, rows=page_size,
-                                         sort=sort)
-        return page
-
-    @CachingManager.cache()
-    def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-              **kwargs) -> List[Dict]:
-        """
-        Get the top words based on a sample
-        :param query:
-        :param start_date:
-        :param end_date:
-        :param limit:
-        :param kwargs: sources and collections lists
-        :return:
-        """
-        q, fq = self._format_query(query, start_date, end_date, **kwargs)
-        top_words = self._mc_client.wordCount(q, fq)[:limit]
-        return top_words
-
-    @CachingManager.cache()
-    def tags(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> List[Dict]:
-        q, fq = self._format_query(query, start_date, end_date, **kwargs)
-        tags_sets_id = kwargs.get('tags_sets_id', None)
-        sample_size = kwargs.get('sample_size', None)
-        top_tags = self._mc_client.storyTagCount(q, fq, tag_sets_id=tags_sets_id, limit=sample_size, http_method='POST')
-        return top_tags
-
-    @classmethod
-    def _format_query(cls, query: str, start_date: dt.datetime, end_date: dt.datetime,
-                      **kwargs) -> (str, str):
-        """
-        Take all the query params and return q and fq suitable for a media cloud solr-syntax query
-        :param query:
-        :param start_date:
-        :param end_date:
-        :param kwargs: sources and collections
-        :return:
-        """
-        media_ids = kwargs['sources'] if 'sources' in kwargs else []
-        tags_ids = kwargs['collections'] if 'collections' in kwargs else []
-        q = cls._query_from_parts(query, media_ids, tags_ids)
-        fq = MediaCloud.dates_as_query_clause(start_date, end_date)
-        return q, fq
-
-    @classmethod
-    def _query_from_parts(cls, query: str, media_ids: List[int], tag_ids: List[int]) -> str:
-        query = '({})'.format(query)
-        if len(media_ids) > 0 or (len(tag_ids) > 0):
-            clauses = []
-            # add in the media sources they specified
-            if len(media_ids) > 0:  # this format is a string of media_ids
-                query_clause = "media_id:({})".format(" ".join([str(m) for m in media_ids]))
-                clauses.append(query_clause)
-            # add in the collections they specified
-            if len(tag_ids) > 0:  # this format is a string of tags_id_medias
-                query_clause = "tags_id_media:({})".format(" ".join([str(m) for m in tag_ids]))
-                clauses.append(query_clause)
-            # now add in any addition media query clauses (get OR'd together)
-            if len(clauses) > 0:
-                query += " AND ({})".format(" OR ".join(clauses))
-        return query
-
-    def __repr__(self):
-        # important to keep this unique among platforms so that the caching works right
-        return "OnlineNewsMediaCloudLegacyProvider"
-
-    @classmethod
-    def _matches_to_rows(cls, matches: List) -> List:
-        return [OnlineNewsMediaCloudProvider._match_to_row(m) for m in matches]
-
-    @classmethod
-    def _match_to_row(cls, match: Dict) -> Dict:
-        return {
-            'media_name': mcmetadata.urls.canonical_domain(match['url']),
-            'media_url': match['media_url'],
-            'id': match['stories_id'],
-            'title': match['title'],
-            'publish_date': dateparser.parse(match['publish_date']),
-            'url': match['url'],
-            'language': match['language'],
-        }

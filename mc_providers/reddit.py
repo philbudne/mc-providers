@@ -11,15 +11,17 @@ from .language import top_detected
 
 REDDIT_PUSHSHIFT_URL = "https://api.pushshift.io"
 SUBMISSION_SEARCH_URL = "{}/reddit/submission/search".format(REDDIT_PUSHSHIFT_URL)
+DEFAULT_TIMEOUT = 60
 
 
 @deprecated
 class RedditPushshiftProvider(ContentProvider):
 
-    def __init__(self):
+    def __init__(self, timeout: int = None):
         super(RedditPushshiftProvider, self).__init__()
         self._logger = logging.getLogger(__name__)
         self._session = requests.Session()  # better performance to put all HTTP through this one object
+        self._timeout = timeout or DEFAULT_TIMEOUT
 
     def everything_query(self) -> str:
         return '*'
@@ -122,7 +124,7 @@ class RedditPushshiftProvider(ContentProvider):
         params['metadata'] = 'true'
         # and now add in any other arguments they have sent in
         params.update(kwargs)
-        r = self._session.get(SUBMISSION_SEARCH_URL, headers=headers, params=params)
+        r = self._session.get(SUBMISSION_SEARCH_URL, headers=headers, params=params, timeout=self._timeout)
         # temp = r.url # useful assignment for debugging investigations
         return r.json()
 
