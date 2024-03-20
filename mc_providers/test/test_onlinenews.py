@@ -318,7 +318,7 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
     def setUp(self):
         # this requires having a VPN tunnel open to the Media Cloud production
         self._provider = provider_for(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD, None,
-                                      "http://localhost:8020/v1/")
+                                      "http://localhost:8000/v1/")
 
     def test_expanded_story_list(self):
         query = "*"
