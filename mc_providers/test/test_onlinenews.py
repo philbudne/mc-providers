@@ -118,14 +118,16 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
         assert found_story_count == story_count
 
     def test_words(self):
-        results = self._provider.words("coronavirus", dt.datetime(2023, 12, 1), dt.datetime(2023, 12, 5))
+        results = self._provider.words("coronavirus", dt.datetime(2023, 12, 1),
+                                       dt.datetime(2023, 12, 5))
         last_count = 99999999999
         for item in results:
             assert last_count >= item['count']
             last_count = item['count']
 
     def test_top_sources(self):
-        results = self._provider.sources("coronavirus", dt.datetime(2023, 11, 1), dt.datetime(2023, 12, 1))
+        results = self._provider.sources("coronavirus", dt.datetime(2023, 11, 1),
+                                         dt.datetime(2023, 12, 1))
         assert len(results) > 0
         last_count = 999999999999
         for r in results:
@@ -138,7 +140,8 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
         assert len(source_names) == len(set(source_names))
 
     def test_languages(self):
-        results = self._provider.languages("Trump", dt.datetime(2023, 11, 1), dt.datetime(2023, 12, 1))
+        results = self._provider.languages("Trump", dt.datetime(2023, 11, 1),
+                                           dt.datetime(2023, 12, 1))
         last_count = 99999999999
         last_ratio = 1
         assert len(results) > 0
@@ -166,32 +169,35 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
 
     def test_confirm_sample_chunk_query(self):
         base_query = "technology"
-        chunked = OnlineNewsWaybackMachineProvider._assemble_and_chunk_query_str(base_query, domains=self.DOMAINS_OVER_LIMIT)
+        chunked = OnlineNewsWaybackMachineProvider._assemble_and_chunk_query_str(base_query,
+                                                                                 domains=self.DOMAINS_OVER_LIMIT)
         assert len(chunked) == 2
         assert all([len(q) < OnlineNewsWaybackMachineProvider.MAX_QUERY_LENGTH for q in chunked])
 
     def test_confirm_sample_chunk_filter(self):
         base_query = "technology"
-        chunked = OnlineNewsWaybackMachineProvider._assemble_and_chunk_query_str(base_query, filters=self.DOMAINS_OVER_LIMIT)
+        chunked = OnlineNewsWaybackMachineProvider._assemble_and_chunk_query_str(base_query,
+                                                                                 filters=self.DOMAINS_OVER_LIMIT)
         assert len(chunked) == 2
         assert all([len(q) < OnlineNewsWaybackMachineProvider.MAX_QUERY_LENGTH for q in chunked])
 
     def test_confirm_sample_chunk_query_filter_and_domain(self):
         base_query = "technology"
-        chunked = OnlineNewsWaybackMachineProvider._assemble_and_chunk_query_str(base_query, domains=self.DOMAINS_OVER_LIMIT,
+        chunked = OnlineNewsWaybackMachineProvider._assemble_and_chunk_query_str(base_query,
+                                                                                 domains=self.DOMAINS_OVER_LIMIT,
                                                                filters=self.DOL_SHUFFLED())
         assert len(chunked) == 4
         assert all([len(q) < OnlineNewsWaybackMachineProvider.MAX_QUERY_LENGTH for q in chunked])
 
     def test_overlarge_language(self):
         base_query = "technology"
-        startdate = dt.datetime(2023, 1, 1)
-        enddate = dt.datetime(2023, 12, 1)
-        results = self._provider.languages(base_query, startdate, enddate, domains=self.DOMAINS_OVER_LIMIT)
+        start_date = dt.datetime(2023, 1, 1)
+        end_date = dt.datetime(2023, 12, 1)
+        results = self._provider.languages(base_query, start_date, end_date, domains=self.DOMAINS_OVER_LIMIT)
         assert len(results) > 1
-        # This pattern is just an extra correctness guarantee- if chunking is implemented correctly, then shuffling
+        # This pattern is just an extra correctness guarantee - if chunking is implemented correctly, then shuffling
         # the domain order won't effect the output at all.
-        results_shuffled = self._provider.languages(base_query, startdate, enddate, domains=self.DOL_SHUFFLED())
+        results_shuffled = self._provider.languages(base_query, start_date, end_date, domains=self.DOL_SHUFFLED())
         # Since the results might not be in the same order, we compare item-wise
         for language in results:
             assert language in results_shuffled
@@ -212,28 +218,28 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
         # assert results_shuffled == results
 
     def test_overlarge_words(self):
-        '''
+        """
         # NB: this test is brief because the results of the words query are not safe against chunking
         # I'm not sure what the right behavior is.
         base_query = "technology"
-        startdate = dt.datetime(2023, 1, 1)
-        enddate = dt.datetime(2023, 12, 1)
-        results = self._provider.words(base_query, startdate, enddate, domains=self.DOMAINS_OVER_LIMIT)
+        start_date = dt.datetime(2023, 1, 1)
+        end_date = dt.datetime(2023, 12, 1)
+        results = self._provider.words(base_query, start_date, end_date, domains=self.DOMAINS_OVER_LIMIT)
         assert len(results) > 0
-        results_shuffled = self._provider.words(base_query, startdate, enddate, domains=self.DOL_SHUFFLED())
+        results_shuffled = self._provider.words(base_query, start_date, end_date, domains=self.DOL_SHUFFLED())
         assert len(results_shuffled) > 0
-        '''
+        """
         assert True
 
     def test_overlarge_count_over_time(self):
-        startdate = dt.datetime(2023, 12, 1)
-        enddate = dt.datetime(2023, 12, 3)
+        start_date = dt.datetime(2023, 12, 1)
+        end_date = dt.datetime(2023, 12, 3)
 
-        results = self._provider.count_over_time('*', startdate, enddate, domains=self.DOMAINS_OVER_LIMIT)
+        results = self._provider.count_over_time('*', start_date, end_date, domains=self.DOMAINS_OVER_LIMIT)
 
         assert len(results["counts"]) == 3
 
-        results_shuffled = self._provider.count_over_time('*', startdate, enddate, domains=self.DOL_SHUFFLED())
+        results_shuffled = self._provider.count_over_time('*', start_date, end_date, domains=self.DOL_SHUFFLED())
         assert len(results_shuffled["counts"]) == 3
 
         r_counts = [r["count"] for r in results["counts"]]
@@ -243,22 +249,22 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
         assert results_shuffled == results
 
     def test_overlarge_count(self):
-        startdate = dt.datetime(2023, 1, 1)
-        enddate = dt.datetime(2023, 12, 1)
+        start_date = dt.datetime(2023, 1, 1)
+        end_date = dt.datetime(2023, 12, 1)
 
-        results = self._provider.count('*', startdate, enddate, domains=self.DOMAINS_OVER_LIMIT)
+        results = self._provider.count('*', start_date, end_date, domains=self.DOMAINS_OVER_LIMIT)
         assert results > 20000
 
-        results_shuffled = self._provider.count('*', startdate, enddate, domains=self.DOL_SHUFFLED())
+        results_shuffled = self._provider.count('*', start_date, end_date, domains=self.DOL_SHUFFLED())
         assert results_shuffled == results
 
     def test_overlarge_sample(self):
         #Not much you can do to test this guy
         base_query = "technology"
-        startdate = dt.datetime(2022, 1, 1)
-        enddate = dt.datetime(2023, 12, 1)
+        start_date = dt.datetime(2022, 1, 1)
+        end_date = dt.datetime(2023, 12, 1)
 
-        results = self._provider.sample(base_query, startdate, enddate, limit=10, domains=self.DOMAINS_OVER_LIMIT)
+        results = self._provider.sample(base_query, start_date, end_date, limit=10, domains=self.DOMAINS_OVER_LIMIT)
         assert len(results) == 10
 
     def DOL_SHUFFLED(self):
@@ -285,8 +291,8 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
         # then query it for stories with the collection id
         all_stories = []
         max_stories = 4500  # just to make sure it doesn't spin forever
-        for page_of_stories in self._provider.all_items("*", dt.datetime(2023, 1, 1), dt.datetime(2023, 12, 1),
-                                                        domains=domains):
+        for page_of_stories in self._provider.all_items("*", dt.datetime(2023, 1, 1),
+                                                        dt.datetime(2023, 12, 1), domains=domains):
             assert len(page_of_stories) > 0
             all_stories.extend(page_of_stories)
             if len(all_stories) > max_stories:
@@ -312,7 +318,7 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
     def setUp(self):
         # this requires having a VPN tunnel open to the Media Cloud production
         self._provider = provider_for(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD, None,
-                                     "http://localhost:8010/v1/")
+                                      "http://localhost:8020/v1/")
 
     def test_expanded_story_list(self):
         query = "*"
@@ -373,3 +379,10 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
     def test_domain_filter(self):
         self._test_domain_filters(["cnn.com"])
         self._test_domain_filters(["cnn.com", "foxnews.com"])
+
+    def test_item(self):
+        STORY_ID = "180ddf49e3da7eea5812a35ab06a4f1656e5483649b9a8805bdcfaf4e8284b41"  # a 2024-03-09 story
+        story = self._provider.item(STORY_ID)
+        assert len(story['title']) > 0
+        assert story['language'] == 'en'
+        assert story['domain'] == 'cnn.com'
