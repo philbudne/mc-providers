@@ -53,7 +53,7 @@ def provider_by_name(name: str, api_key: Optional[str], base_url: Optional[str])
 
 
 def provider_for(platform: str, source: str, api_key: Optional[str], base_url: Optional[str],
-                 timeout: int = DEFAULT_TIMEOUT) -> ContentProvider:
+                 timeout: int = None) -> ContentProvider:
     """
     A factory method that returns the appropriate data provider. Throws an exception to let you know if the
     arguments are unsupported.
@@ -64,6 +64,8 @@ def provider_for(platform: str, source: str, api_key: Optional[str], base_url: O
     :param timeout: override the default timeout for the provider (in seconds)
     :return: the appropriate ContentProvider subclass
     """
+    if timeout is None:
+        timeout = DEFAULT_TIMEOUT
     available = available_provider_names()
     if provider_name(platform, source) in available:
         if (platform == PLATFORM_TWITTER) and (source == PLATFORM_SOURCE_TWITTER):
