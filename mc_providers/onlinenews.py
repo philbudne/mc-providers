@@ -28,18 +28,18 @@ class OnlineNewsAbstractProvider(ContentProvider):
         self._client = self.get_client()
 
     def get_client(self):
-        raise NotImplementedError("Abstract provider class should not be implimented directly")
+        raise NotImplementedError("Abstract provider class should not be implemented directly")
 
     @classmethod
     def domain_search_string(cls):
-        raise NotImplementedError("Abstract provider class should not be implimented directly")
+        raise NotImplementedError("Abstract provider class should not be implemented directly")
 
     def everything_query(self) -> str:
         return '*'
 
     # Chunk'd
     # NB: it looks like the limit keyword here doesn't ever get passed into the query - something's missing here.
-    @CachingManager.cache()
+    @CachingManager.cache('overview')
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
                **kwargs) -> List[Dict]:
         results = []
@@ -53,7 +53,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return self._matches_to_rows(results)
 
     # Chunk'd
-    @CachingManager.cache()
+    @CachingManager.cache('overview')
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
         count = 0
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
@@ -61,7 +61,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return count
 
     # Chunk'd
-    @CachingManager.cache()
+    @CachingManager.cache('overview')
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
         
         counter = Counter()
@@ -139,7 +139,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return top_terms
 
     # Chunk'd
-    @CachingManager.cache()
+    @CachingManager.cache('overview')
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
                   **kwargs) -> List[Dict]:
         
@@ -164,6 +164,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return top_languages[:limit]
 
     # Chunk'd
+    @CachingManager.cache('overview')
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                 **kwargs) -> List[Dict]:
         
