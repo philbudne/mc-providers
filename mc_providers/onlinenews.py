@@ -2,8 +2,10 @@ import datetime as dt
 from typing import List, Dict, Optional
 import dateparser
 import logging
+import ciso8601
 import numpy as np
 import random
+import mcnews.util
 from waybacknews.searchapi import SearchApiClient
 from mcnews.searchapi import SearchApiClient as MCSearchApiClient
 from collections import Counter
@@ -39,7 +41,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
     # Chunk'd
     # NB: it looks like the limit keyword here doesn't ever get passed into the query - something's missing here.
-    @CachingManager.cache('overview')
+    @CachingManager.cache()
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
                **kwargs) -> List[Dict]:
         results = []
@@ -53,7 +55,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return self._matches_to_rows(results)
 
     # Chunk'd
-    @CachingManager.cache('overview')
+    @CachingManager.cache()
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
         count = 0
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
@@ -61,25 +63,27 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return count
 
     # Chunk'd
-    @CachingManager.cache('overview')
+    @CachingManager.cache()
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
         
         counter = Counter()
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
             results = self._client.count_over_time(subquery, start_date, end_date, **kwargs)
-            countable = {i['date']:i['count'] for i in results}
+            countable = {i['date']: i['count'] for i in results}
             counter += Counter(countable)
         
         counter_dict = dict(counter)
-        results = [{"date":date, "timestamp":date.timestamp(), "count":count} for date, count in counter_dict.items()]
+        results = [{"date": date, "timestamp": date.timestamp(), "count": count} for date, count in counter_dict.items()]
         # Somehow the order of this list gets out of wack. Sorting before returning for the sake of testability
-        sorted_results = sorted(results, key = lambda x: x["timestamp"]) 
+        sorted_results = sorted(results, key=lambda x: x["timestamp"])
         return {'counts': sorted_results}
 
     
     @CachingManager.cache()
     def item(self, item_id: str) -> Dict:
-        return self._client.article(item_id)
+        one_item = self._client.article(item_id)
+        return self._match_to_row(one_item)
+
     
     # Chunk'd
     def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs):
@@ -139,7 +143,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return top_terms
 
     # Chunk'd
-    @CachingManager.cache('overview')
+    @CachingManager.cache
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
                   **kwargs) -> List[Dict]:
         
@@ -148,13 +152,13 @@ class OnlineNewsAbstractProvider(ContentProvider):
         results_counter = Counter({})
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs) :   
             this_languages = self._client.top_languages(subquery, start_date, end_date, **kwargs)
-            countable = {item["name"]:item["value"] for item in this_languages}
+            countable = {item["name"]: item["value"] for item in this_languages}
             results_counter += Counter(countable)
             # top_languages.extend(this_languages)
         
         all_results = dict(results_counter)
         
-        top_languages = [{'language':name, 'value':value} for name, value in all_results.items()]
+        top_languages = [{'language': name, 'value': value, 'ratio': 0.0} for name, value in all_results.items()]
         
         for item in top_languages:
             item['ratio'] = item['value'] / matching_count
@@ -164,7 +168,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return top_languages[:limit]
 
     # Chunk'd
-    @CachingManager.cache('overview')
+    @CachingManager.cache()
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                 **kwargs) -> List[Dict]:
         
@@ -173,13 +177,13 @@ class OnlineNewsAbstractProvider(ContentProvider):
         results_counter = Counter({})
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
             results = self._client.top_sources(subquery, start_date, end_date)
-            countable = {source['name']:source['value'] for source in results}
+            countable = {source['name']: source['value'] for source in results}
             results_counter += Counter(countable)
             # all_results.extend(results)
         
         all_results = dict(results_counter)
         cleaned_sources = [{"source": source , "count": count} for source, count in all_results.items()]
-        cleaned_sources = sorted(cleaned_sources, key= lambda x: x['count'], reverse=True)
+        cleaned_sources = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
         return cleaned_sources
 
     @classmethod
@@ -368,3 +372,64 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
     def __repr__(self):
         return "OnlineNewsMediaCloudProvider"
+
+    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
+        # no chunking on MC
+        results = self._overview_query(query, start_date, end_date, **kwargs)
+        if self._client._is_no_results(results):
+            return 0
+        return results['total']
+
+    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
+        # no chunking on MC
+        results = self._overview_query(query, start_date, end_date, **kwargs)
+        if self._client._is_no_results(results):
+            to_return = []
+        else:
+            data = results['dailycounts']
+            to_return = []
+            # transform to list of dicts for easier use
+            for day_date, day_value in data.items():  # date is in 'YYYY-MM-DD' format
+                day = ciso8601.parse_datetime(day_date)
+                to_return.append({
+                    'date': day,
+                    'timestamp': day.timestamp(),
+                    'count': day_value,
+                })
+        sorted_results = sorted(to_return, key=lambda x: x["timestamp"])
+        return {'counts': sorted_results}
+
+    def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> List[Dict]:
+        # no chunking on MC
+        results = self._overview_query(query, start_date, end_date, **kwargs)
+        if self._client._is_no_results(results):
+            return []
+        return self._matches_to_rows(results['matches'])
+
+    def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
+                  **kwargs) -> List[Dict]:
+        results = self._overview_query(query, start_date, end_date, **kwargs)
+        if self._client._is_no_results(results):
+            return []
+        top_languages = [{'language': name, 'value': value, 'ratio': 0.0}
+                         for name, value in results['toplangs'].items()]
+        # now normalize
+        matching_count = self.count(query, start_date, end_date, **kwargs)
+        for item in top_languages:
+            item['ratio'] = item['value'] / matching_count
+        # Sort by count
+        top_languages = sorted(top_languages, key=lambda x: x['value'], reverse=True)
+        return top_languages[:limit]
+
+    def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
+                **kwargs) -> List[Dict]:
+        results = self._overview_query(query, start_date, end_date, **kwargs)
+        if self._client._is_no_results(results):
+            return []
+        cleaned_sources = [{"source": source, "count": count} for source, count in results['topdomains'].items()]
+        cleaned_sources = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
+        return cleaned_sources
+
+    @CachingManager.cache('overview')
+    def _overview_query(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
+        return self._client._overview_query(query, start_date, end_date, **kwargs)

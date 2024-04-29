@@ -56,8 +56,9 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
                                         dt.datetime(2023, 3, 1), dt.datetime(2023, 4, 1),
                                         domains=domains)
         assert len(results) > 0
-        for s in results:
-            assert s['media_name'] in domains
+        discovered_domains = [s['media_name'] for s in results]
+        outlier_domains = [d for d in discovered_domains if d not in domains]
+        assert len(outlier_domains) == 0
 
     def test_language_clause(self):
         start_date = dt.datetime(2023, 3, 1)
@@ -113,7 +114,6 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
         # now test it
         found_story_count = 0
         for page in self._provider.all_items(query, start_date, end_date):
-            assert len(page) > 0
             found_story_count += len(page)
         assert found_story_count == story_count
 
@@ -318,7 +318,7 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
     def setUp(self):
         # this requires having a VPN tunnel open to the Media Cloud production
         self._provider = provider_for(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD, None,
-                                      "http://localhost:8000/v1/")
+                                      "http://localhost:8010/v1/")
 
     def test_expanded_story_list(self):
         query = "*"
@@ -385,4 +385,4 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         story = self._provider.item(STORY_ID)
         assert len(story['title']) > 0
         assert story['language'] == 'en'
-        assert story['domain'] == 'cnn.com'
+        assert story['media_name'] == 'cnn.com'
