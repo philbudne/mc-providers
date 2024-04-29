@@ -369,14 +369,16 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
         # no chunking on MC
-        results = self._overview_query(query, start_date, end_date, **kwargs)
+        q = self._assembled_query_str(query, **kwargs)
+        results = self._overview_query(q, start_date, end_date, **kwargs)
         if self._client._is_no_results(results):
             return 0
         return results['total']
 
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
         # no chunking on MC
-        results = self._overview_query(query, start_date, end_date, **kwargs)
+        q = self._assembled_query_str(query, **kwargs)
+        results = self._overview_query(q, start_date, end_date, **kwargs)
         if self._client._is_no_results(results):
             to_return = []
         else:
@@ -395,14 +397,16 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> List[Dict]:
         # no chunking on MC
-        results = self._overview_query(query, start_date, end_date, **kwargs)
+        q = self._assembled_query_str(query, **kwargs)
+        results = self._overview_query(q, start_date, end_date, **kwargs)
         if self._client._is_no_results(results):
             return []
         return self._matches_to_rows(results['matches'])
 
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
                   **kwargs) -> List[Dict]:
-        results = self._overview_query(query, start_date, end_date, **kwargs)
+        q = self._assembled_query_str(query, **kwargs)
+        results = self._overview_query(q, start_date, end_date, **kwargs)
         if self._client._is_no_results(results):
             return []
         top_languages = [{'language': name, 'value': value, 'ratio': 0.0}
@@ -417,7 +421,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                 **kwargs) -> List[Dict]:
-        results = self._overview_query(query, start_date, end_date, **kwargs)
+        q = self._assembled_query_str(query, **kwargs)
+        results = self._overview_query(q, start_date, end_date, **kwargs)
         if self._client._is_no_results(results):
             return []
         cleaned_sources = [{"source": source, "count": count} for source, count in results['topdomains'].items()]
@@ -426,4 +431,5 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
     @CachingManager.cache('overview')
     def _overview_query(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
-        return self._client._overview_query(query, start_date, end_date, **kwargs)
+        q = self._assembled_query_str(query, **kwargs)
+        return self._client._overview_query(q, start_date, end_date, **kwargs)

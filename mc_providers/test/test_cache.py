@@ -58,6 +58,29 @@ class CacheMediaCloudTest(unittest.TestCase):
     def test_count(self):
         self._reset_cache()
         self._verify_cache_size(0)
-        results = self._provider.count("coronavirus", dt.datetime(2023, 11, 1),
-                                       dt.datetime(2023, 12, 1))
+        domains = ['usatoday.com', 'latimes.com', 'nypost.com']
+        # prime cache
+        results1 = self._provider.count("coronavirus", dt.datetime(2023, 11, 1),
+                                        dt.datetime(2023, 12, 1),
+                                        domains=domains)
         self._verify_cache_size(1)
+        # verify first item cached
+        results2 = self._provider.count("coronavirus", dt.datetime(2023, 11, 1),
+                                        dt.datetime(2023, 12, 1),
+                                        domains=domains)
+        self._verify_cache_size(1)
+        assert results1 == results2
+        # add second
+        results3 = self._provider.count("coronavirus", dt.datetime(2023, 11, 1),
+                                        dt.datetime(2023, 12, 1))
+        self._verify_cache_size(2)
+        assert results1 != results3
+        # verify second cached
+        results4 = self._provider.count("coronavirus", dt.datetime(2023, 11, 1),
+                                        dt.datetime(2023, 12, 1))
+        self._verify_cache_size(2)
+        assert results3 == results4
+        # verify other query, which also uses `overview` under the hood, is a cache hit
+        results5 = self._provider.sample("coronavirus", dt.datetime(2023, 11, 1),
+                                         dt.datetime(2023, 12, 1))
+        self._verify_cache_size(2)
