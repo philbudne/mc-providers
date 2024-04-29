@@ -41,7 +41,6 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
     # Chunk'd
     # NB: it looks like the limit keyword here doesn't ever get passed into the query - something's missing here.
-    @CachingManager.cache()
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
                **kwargs) -> List[Dict]:
         results = []
@@ -55,7 +54,6 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return self._matches_to_rows(results)
 
     # Chunk'd
-    @CachingManager.cache()
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
         count = 0
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
@@ -63,9 +61,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return count
 
     # Chunk'd
-    @CachingManager.cache()
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
-        
         counter = Counter()
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
             results = self._client.count_over_time(subquery, start_date, end_date, **kwargs)
@@ -143,7 +139,6 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return top_terms
 
     # Chunk'd
-    @CachingManager.cache
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
                   **kwargs) -> List[Dict]:
         
@@ -168,7 +163,6 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return top_languages[:limit]
 
     # Chunk'd
-    @CachingManager.cache()
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                 **kwargs) -> List[Dict]:
         
