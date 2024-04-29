@@ -22,6 +22,7 @@ Make sure `pip install flit twine` so you can build and deploy to PyPI.
 5. Run `flit publish` to upload it to PyPI
 
 ### Version History
+* __v2.0.0__ - change CachingManager interface to support online news providers better  
 * __v1.0.1__ - fix default timeout option that applies across all providers 
 * __v1.0.0__ - Remove legacy Media Cloud, add timeout option to `provider_for` 
 * __v0.5.3__ - Temporary fix to onlinenews-mediacloud search handling 
