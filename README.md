@@ -22,6 +22,7 @@ Make sure `pip install flit twine` so you can build and deploy to PyPI.
 5. Run `flit publish` to upload it to PyPI
 
 ### Version History
+* __v2.0.3__ - version bump for automatic releases
 * __v2.0.2__ - respect domain filters on Media Cloud searches
 * __v2.0.1__ - more work on caching strategies  
 * __v2.0.0__ - change CachingManager interface to support online news providers better  
