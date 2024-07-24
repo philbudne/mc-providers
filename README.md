@@ -18,10 +18,10 @@ Make sure `pip install flit twine` so you can build and deploy to PyPI.
 1. Bump the version number in `pyproject.toml`
 2. Add a note about changes to the version history below
 3. Commit the changes and tag it with a semantic version number
-4. Run `flit build` to create an installation package
-5. Run `flit publish` to upload it to PyPI
+4. A github action will build and push the repository on committing a tagged version
 
 ### Version History
+* __v2.0.5__ - Build-system in pyproject.toml
 * __v2.0.4__ - reintroduce stopwords
 * __v2.0.3__ - version bump for automatic releases
 * __v2.0.2__ - respect domain filters on Media Cloud searches
