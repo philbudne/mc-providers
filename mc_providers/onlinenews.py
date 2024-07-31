@@ -7,13 +7,12 @@ import numpy as np
 import random
 import mcnews.util
 from waybacknews.searchapi import SearchApiClient
-from mcnews.searchapi import SearchApiClient as MCSearchApiClient
 from collections import Counter
 
 from .language import stopwords_for_language
 from .provider import ContentProvider
 from .cache import CachingManager
-
+from .mediacloud import MCSearchApiClient
 
 class OnlineNewsAbstractProvider(ContentProvider):
     """
