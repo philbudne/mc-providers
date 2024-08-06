@@ -23,14 +23,13 @@ classifiers = [
 ]
 dependencies = [
     "python-dateutil == 2.*",
+    "ciso8601==2.2.*",
     "dateparser",
     "requests",
     "wayback-news-search == 1.*",
     "fasttext == 0.9.*",
     "mediacloud-metadata >= 1.0.0",
-    "mediacloud-api-legacy",
     "mediacloud == 4.*",
-    "mediacloud-news-client == 2.*"
 ]
 
 [tool.flit.sdist]
