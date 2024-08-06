@@ -21,6 +21,7 @@ Make sure `pip install flit twine` so you can build and deploy to PyPI.
 4. A github action will build and push the repository on committing a tagged version
 
 ### Version History
+* __v2.1.0__ - Mediacloud news client code incorperated into this package
 * __v2.0.5__ - Build-system in pyproject.toml
 * __v2.0.4__ - reintroduce stopwords
 * __v2.0.3__ - version bump for automatic releases
