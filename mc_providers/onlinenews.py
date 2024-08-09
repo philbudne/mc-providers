@@ -5,7 +5,6 @@ import logging
 import ciso8601
 import numpy as np
 import random
-import mcnews.util
 from waybacknews.searchapi import SearchApiClient
 from collections import Counter
 
