@@ -2,6 +2,7 @@ import datetime as dt
 from typing import List, Dict, Optional
 import logging
 import requests
+import time
 import ciso8601
 
 
@@ -175,12 +176,18 @@ class MCSearchApiClient:
         if params and ('q' in params):
             params['q'] = sanitize_query(params['q'])
         endpoint_url = self.API_BASE_URL+endpoint
+        start_time = time.time()
         if method == 'GET':
             r = self._session.get(endpoint_url, params=params, timeout=self.TIMEOUT_SECS)
         elif method == 'POST':
             r = self._session.post(endpoint_url, json=params, timeout=self.TIMEOUT_SECS)
         else:
             raise RuntimeError("Unsupported method of '{}'".format(method))
+        duration = time.time() - start_time()
+
+        if r.status_code == 504:
+            raise RuntimeError("Client Recieved 504 Gateway Timeout from API after {} Secs. Client Timeout: {}, " 
+                               "Endpoint: {}, Params: {}, ".format(duration, self.TIMEOUT_SECS, endpoint_url, params))
 
         if r.status_code >= 500:
             raise RuntimeError("API Server Error {}: a bad query string could have triggered this. Endpoint: {},"
