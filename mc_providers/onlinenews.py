@@ -20,8 +20,8 @@ class OnlineNewsAbstractProvider(ContentProvider):
     
     MAX_QUERY_LENGTH = pow(2, 14)
 
-    def __init__(self, base_url: Optional[str], timeout: int = None):
-        super().__init__()
+    def __init__(self, base_url: Optional[str], timeout: int = None, caching: bool = True):
+        super().__init__(caching)
         self._logger = logging.getLogger(__name__)
         self._base_url = base_url
         self._timeout = timeout
@@ -60,7 +60,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
     # Chunk'd
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
-        counter = Counter()
+        counter: Counter = Counter()
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
             results = self._client.count_over_time(subquery, start_date, end_date, **kwargs)
             countable = {i['date']: i['count'] for i in results}
@@ -120,7 +120,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         sample_size = 5000
         
         # An accumulator for the subqueries
-        results_counter = Counter({})
+        results_counter: Counter = Counter({})
         for subquery in chunked_queries:
             this_results = self._client.terms(subquery, start_date, end_date,
                                      self._client.TERM_FIELD_TITLE, self._client.TERM_AGGREGATION_TOP)
@@ -142,7 +142,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         
         matching_count = self.count(query, start_date, end_date, **kwargs)
 
-        results_counter = Counter({})
+        results_counter: Counter = Counter({})
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs) :   
             this_languages = self._client.top_languages(subquery, start_date, end_date, **kwargs)
             countable = {item["name"]: item["value"] for item in this_languages}
@@ -166,7 +166,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         
         # all_results = []
         
-        results_counter = Counter({})
+        results_counter: Counter = Counter({})
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
             results = self._client.top_sources(subquery, start_date, end_date)
             countable = {source['name']: source['value'] for source in results}
@@ -285,8 +285,8 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
 
-    def __init__(self, base_url: Optional[str] = None, timeout: int = None):
-        super().__init__(base_url, timeout)  # will call get_client
+    def __init__(self, base_url: Optional[str] = None, timeout: int = None, caching: bool = True):
+        super().__init__(base_url, timeout, caching)  # will call get_client
 
     def get_client(self):
         client = SearchApiClient("mediacloud", self._base_url)
@@ -329,8 +329,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     
     DEFAULT_COLLECTION = "mc_search-*"
 
-    def __init__(self, base_url=Optional[str], timeout: int = None):
-        super().__init__(base_url, timeout)
+    def __init__(self, base_url=Optional[str], timeout: int = None, caching: bool = True):
+        super().__init__(base_url, timeout, caching)
 
     def get_client(self):
         api_client = MCSearchApiClient(collection=self.DEFAULT_COLLECTION, api_base_url=self._base_url)

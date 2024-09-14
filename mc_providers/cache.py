@@ -1,5 +1,6 @@
 from typing import Callable, Optional
 
+from .provider import ContentProvider
 
 class CachingManager():
     """
@@ -19,7 +20,10 @@ class CachingManager():
         def decorator(fn: Callable):
             def wrapper(*args, **kwargs):
                 cache_prefix = custom_prefix_for_key if custom_prefix_for_key is not None else fn.__name__
-                if cls.cache_function is not None:
+                # see if first argument is a ContentProvider (invocation of ContentProvider method)
+                # this could be less ugly if "cache" was ONLY EVER used on ContentProvider methods!
+                caching = len(args) < 1 or not isinstance(args[0], ContentProivider) or args[0]._caching
+                if caching and cls.cache_function is not None:
                     # use the function name
                     results, was_cached = cls.cache_function(fn, cache_prefix, *args, **kwargs)
                     return results

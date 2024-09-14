@@ -27,8 +27,8 @@ class TwitterTwitterProvider(ContentProvider):
     MAX_QUERY_LENGTH = 1024  # I think?
     POLITENESS_DELAY = 1  # sleep for half a second if we're gonna spam a bunch of queries
     
-    def __init__(self, bearer_token=None, timeout=None):
-        super(TwitterTwitterProvider, self).__init__()
+    def __init__(self, bearer_token=None, timeout=None, caching=True):
+        super(TwitterTwitterProvider, self).__init__(caching)
         self._logger = logging.getLogger(__name__)
         self._bearer_token = bearer_token
         self._session = requests.Session()  # better performance to put all HTTP through this one object
@@ -129,7 +129,7 @@ class TwitterTwitterProvider(ContentProvider):
         :param kwargs:
         :return:
         """
-        counter = Counter()
+        counter: Counter = Counter()
 
         for subquery in  self._assemble_and_chunk_query_str(query, **kwargs):
             #print(subquery)

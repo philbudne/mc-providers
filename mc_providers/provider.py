@@ -21,8 +21,11 @@ class ContentProvider(ABC):
     Any unimplemented methods raise an Exception
     """
 
-    def __init__(self):
+    def __init__(self, caching: Optional[bool] = True):
         self._logger = logging.getLogger(__name__)
+        if caching is None:
+            caching = True
+        self._caching = caching
 
     def everything_query(self) -> str:
         raise QueryingEverythingUnsupportedQuery()
@@ -114,7 +117,7 @@ class ContentProvider(ABC):
         sample_size = kwargs['sample_size'] if 'sample_size' in kwargs else DEFAULT_LANGUAGE_SAMPLE
         # grab a sample and count terms as we page through it
         sampled_count = 0
-        counts = collections.Counter()
+        counts: collections.Counter = collections.Counter()
         for page in self.all_items(query, start_date, end_date, limit=sample_size):
             sampled_count += len(page)
             [counts.update(t['language'] for t in page)]
@@ -129,7 +132,7 @@ class ContentProvider(ABC):
         sample_size = kwargs['sample_size'] if 'sample_size' in kwargs else DEFAULT_WORDS_SAMPLE
         # grab a sample and count terms as we page through it
         sampled_count = 0
-        counts = collections.Counter()
+        counts: collections.Counter = collections.Counter()
         for page in self.all_items(query, start_date, end_date, limit=sample_size):
             sampled_count += len(page)
             [counts.update(terms_without_stopwords(t['language'], t['title'])) for t in page]

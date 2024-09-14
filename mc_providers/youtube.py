@@ -27,8 +27,8 @@ class YouTubeYouTubeProvider(ContentProvider):
     Get matching YouTube videos
     """
 
-    def __init__(self, api_key: str, timeout: int = None):
-        super(YouTubeYouTubeProvider, self).__init__()
+    def __init__(self, api_key: str, timeout: int = None, caching: bool = True):
+        super(YouTubeYouTubeProvider, self).__init__(caching)
         self._logger = logging.getLogger(__name__)
         self._api_key = api_key
         self._timeout = timeout or DEFAULT_TIMEOUT

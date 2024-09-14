@@ -1,7 +1,7 @@
 from collections import defaultdict
 import datetime as dt
 import requests
-from typing import List, Dict
+from typing import List, Dict, Optional
 import logging
 
 from .errors import deprecated
@@ -17,8 +17,8 @@ DEFAULT_TIMEOUT = 60
 @deprecated
 class RedditPushshiftProvider(ContentProvider):
 
-    def __init__(self, timeout: int = None):
-        super(RedditPushshiftProvider, self).__init__()
+    def __init__(self, timeout: int = None, caching: Optional[bool] = True):
+        super(RedditPushshiftProvider, self).__init__(caching)
         self._logger = logging.getLogger(__name__)
         self._session = requests.Session()  # better performance to put all HTTP through this one object
         self._timeout = timeout or DEFAULT_TIMEOUT
