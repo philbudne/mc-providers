@@ -47,13 +47,15 @@ def available_provider_names() -> List[str]:
     ]
 
 
-def provider_by_name(name: str, api_key: Optional[str], base_url: Optional[str], caching: Optional[bool] = True) -> ContentProvider:
+def provider_by_name(name: str, api_key: Optional[str], base_url: Optional[str],
+                     timeout: Optional[int] = None,
+                     caching: bool = True) -> ContentProvider:
     parts = name.split(NAME_SEPARATOR)
-    return provider_for(parts[0], parts[1], api_key, base_url, caching=caching)
+    return provider_for(parts[0], parts[1], api_key, base_url, timeout=timeout, caching=caching)
 
 
 def provider_for(platform: str, source: str, api_key: Optional[str], base_url: Optional[str],
-                 timeout: Optional[int] = None, caching: Optional[bool] = True) -> ContentProvider:
+                 timeout: Optional[int] = None, caching: bool = True) -> ContentProvider:
     """
     A factory method that returns the appropriate data provider. Throws an exception to let you know if the
     arguments are unsupported.
@@ -66,8 +68,6 @@ def provider_for(platform: str, source: str, api_key: Optional[str], base_url: O
     """
     if timeout is None:
         timeout = DEFAULT_TIMEOUT
-    if caching is None:
-        caching = True
     available = available_provider_names()
     platform_provider: ContentProvider
     if provider_name(platform, source) in available:
