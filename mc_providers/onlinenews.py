@@ -20,8 +20,8 @@ class OnlineNewsAbstractProvider(ContentProvider):
     
     MAX_QUERY_LENGTH = pow(2, 14)
 
-    def __init__(self, base_url: Optional[str], timeout: int = None):
-        super().__init__()
+    def __init__(self, base_url: Optional[str], timeout: Optional[int] = None, caching: bool = True):
+        super().__init__(caching)
         self._logger = logging.getLogger(__name__)
         self._base_url = base_url
         self._timeout = timeout
@@ -60,7 +60,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
     # Chunk'd
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
-        counter = Counter()
+        counter: Counter = Counter()
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
             results = self._client.count_over_time(subquery, start_date, end_date, **kwargs)
             countable = {i['date']: i['count'] for i in results}
@@ -101,7 +101,6 @@ class OnlineNewsAbstractProvider(ContentProvider):
     @CachingManager.cache()
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
               **kwargs) -> List[Dict]:
-        
         chunked_queries = self._assemble_and_chunk_query_str(query, **kwargs)
 
         # first figure out the dominant languages, so we can remove appropriate stopwords.
@@ -120,7 +119,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         sample_size = 5000
         
         # An accumulator for the subqueries
-        results_counter = Counter({})
+        results_counter: Counter = Counter({})
         for subquery in chunked_queries:
             this_results = self._client.terms(subquery, start_date, end_date,
                                      self._client.TERM_FIELD_TITLE, self._client.TERM_AGGREGATION_TOP)
@@ -142,7 +141,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         
         matching_count = self.count(query, start_date, end_date, **kwargs)
 
-        results_counter = Counter({})
+        results_counter: Counter = Counter({})
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs) :   
             this_languages = self._client.top_languages(subquery, start_date, end_date, **kwargs)
             countable = {item["name"]: item["value"] for item in this_languages}
@@ -166,7 +165,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         
         # all_results = []
         
-        results_counter = Counter({})
+        results_counter: Counter = Counter({})
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
             results = self._client.top_sources(subquery, start_date, end_date)
             countable = {source['name']: source['value'] for source in results}
@@ -193,7 +192,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         domains = kwargs.get('domains', [])
 
         filters = kwargs.get('filters', [])
-        
+
         if chunk and (len(base_query) > cls.MAX_QUERY_LENGTH):
             # of course there still is the possibility that the base query is too large, which
             # cannot be fixed by this method
@@ -240,31 +239,27 @@ class OnlineNewsAbstractProvider(ContentProvider):
     
     @classmethod
     def _assembled_query_str(cls, query: str, **kwargs) -> str:
-        
+        # filter and/or domain clauses (selectors to be OR'ed together)
+        selector_clauses = []
+
         domains = kwargs.get('domains', [])
-        domain_clause = ""
-        
         if len(domains) > 0:
             domain_string = " OR ".join(domains)
-            domain_clause = f"{cls.domain_search_string()}:({domain_string})"
+            selector_clauses.append(f"{cls.domain_search_string()}:({domain_string})")
             
+        # put all filters in single query string
         filters = kwargs.get('filters', [])
-        filter_clause = ""
-        
         if len(filters) > 0:
-            filter_clause = " OR ".join(filters)
-        
-        # need to put all those filters in single query string
-        q = query
-        
-        if (len(domains) > 0) and (len(filters) > 0) :
-            q += f" AND (({domain_clause}) OR ({filter_clause}))"
-        
-        elif len(domains) > 0:
-            q += f" AND ({domain_clause})"
-        
-        elif len(filters) > 0:
-            q += f" AND ({filter_clause})"
+            selector_clauses.append(" OR ".join(filters))
+
+        if len(selector_clauses) > 0:
+            # generalized to any number of clauses (keep an open mind about sanity clause)
+            # Add parens around user query and each clause to defend ORs
+            # against grabby ANDs:
+            clauses_string = " OR ".join([f"({clause})" for clause in selector_clauses])
+            q = f"({query}) AND ({clauses_string})"
+        else:
+            q = query
         return q
 
     @classmethod
@@ -285,8 +280,8 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
 
-    def __init__(self, base_url: Optional[str] = None, timeout: int = None):
-        super().__init__(base_url, timeout)  # will call get_client
+    def __init__(self, base_url: Optional[str] = None, timeout: Optional[int] = None, caching: bool = True):
+        super().__init__(base_url, timeout, caching)  # will call get_client
 
     def get_client(self):
         client = SearchApiClient("mediacloud", self._base_url)
@@ -329,8 +324,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     
     DEFAULT_COLLECTION = "mc_search-*"
 
-    def __init__(self, base_url=Optional[str], timeout: int = None):
-        super().__init__(base_url, timeout)
+    def __init__(self, base_url=Optional[str], timeout: Optional[int] = None, caching: bool = True):
+        super().__init__(base_url, timeout, caching)
 
     def get_client(self):
         api_client = MCSearchApiClient(collection=self.DEFAULT_COLLECTION, api_base_url=self._base_url)
@@ -377,6 +372,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         # no chunking on MC
         q = self._assembled_query_str(query, **kwargs)
         results = self._overview_query(q, start_date, end_date, **kwargs)
+        to_return: List[Dict]
         if self._client._is_no_results(results):
             to_return = []
         else:
@@ -393,7 +389,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         sorted_results = sorted(to_return, key=lambda x: x["timestamp"])
         return {'counts': sorted_results}
 
-    def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> List[Dict]:
+    # NB: limit argument ignored, but included to keep mypy quiet
+    def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20, **kwargs) -> List[Dict]:
         # no chunking on MC
         q = self._assembled_query_str(query, **kwargs)
         results = self._overview_query(q, start_date, end_date, **kwargs)
@@ -427,7 +424,9 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         cleaned_sources = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
         return cleaned_sources
 
-    @CachingManager.cache('overview')
+    # query string contains domains/filters at this point
+    @CachingManager.cache('overview', ['domains', 'filters'])
     def _overview_query(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
         q = self._assembled_query_str(query, **kwargs)
+
         return self._client._overview_query(q, start_date, end_date, **kwargs)

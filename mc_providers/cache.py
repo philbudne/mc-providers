@@ -1,5 +1,6 @@
-from typing import Callable, Optional
+from typing import Callable, Iterable, Optional
 
+from .provider import ContentProvider
 
 class CachingManager():
     """
@@ -12,15 +13,26 @@ class CachingManager():
     cache_function = None
 
     @classmethod
-    def cache(cls, custom_prefix_for_key: Optional[str] = None):
+    def cache(cls, custom_prefix_for_key: Optional[str] = None, kwargs_to_ignore: Iterable[str] = []):
         """
         @param custom_prefix_for_key: if specified, will be used in place of function name for cache_key generation
         """
         def decorator(fn: Callable):
+            # WISH: detect if 'fn' is being declared as a method to a ContentProvider!!
             def wrapper(*args, **kwargs):
-                cache_prefix = custom_prefix_for_key if custom_prefix_for_key is not None else fn.__name__
-                if cls.cache_function is not None:
-                    # use the function name
+                # blindly assume that everything decorated is a ContentProvider method!
+                inst = args[0]
+                assert isinstance(inst, ContentProvider)
+                # check caching enabled and wasn't disabled when Provider instantiated
+                if cls.cache_function is not None and inst._caching:
+                    cache_prefix = custom_prefix_for_key or fn.__name__
+                    # remove any kwargs already processed
+                    # and included in positional args (ie; query string)
+                    if kwargs_to_ignore and kwargs:
+                        kwargs = kwargs.copy()
+                        for kw in kwargs_to_ignore:
+                            if kw in kwargs:
+                                kwargs.pop(kw)
                     results, was_cached = cls.cache_function(fn, cache_prefix, *args, **kwargs)
                     return results
                 else:

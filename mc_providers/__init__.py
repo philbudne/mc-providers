@@ -47,13 +47,15 @@ def available_provider_names() -> List[str]:
     ]
 
 
-def provider_by_name(name: str, api_key: Optional[str], base_url: Optional[str]) -> ContentProvider:
+def provider_by_name(name: str, api_key: Optional[str], base_url: Optional[str],
+                     timeout: Optional[int] = None,
+                     caching: bool = True) -> ContentProvider:
     parts = name.split(NAME_SEPARATOR)
-    return provider_for(parts[0], parts[1], api_key, base_url)
+    return provider_for(parts[0], parts[1], api_key, base_url, timeout=timeout, caching=caching)
 
 
 def provider_for(platform: str, source: str, api_key: Optional[str], base_url: Optional[str],
-                 timeout: int = None) -> ContentProvider:
+                 timeout: Optional[int] = None, caching: bool = True) -> ContentProvider:
     """
     A factory method that returns the appropriate data provider. Throws an exception to let you know if the
     arguments are unsupported.
@@ -67,31 +69,32 @@ def provider_for(platform: str, source: str, api_key: Optional[str], base_url: O
     if timeout is None:
         timeout = DEFAULT_TIMEOUT
     available = available_provider_names()
+    platform_provider: ContentProvider
     if provider_name(platform, source) in available:
         if (platform == PLATFORM_TWITTER) and (source == PLATFORM_SOURCE_TWITTER):
             if api_key is None:
                 raise APIKeyRequired(platform)
-                
-            platform_provider = TwitterTwitterProvider(api_key, timeout)
-            
+
+            platform_provider = TwitterTwitterProvider(api_key, timeout, caching)
+
         elif (platform == PLATFORM_REDDIT) and (source == PLATFORM_SOURCE_PUSHSHIFT):
-            platform_provider = RedditPushshiftProvider(timeout)
-        
+            platform_provider = RedditPushshiftProvider(timeout, caching)
+
         elif (platform == PLATFORM_YOUTUBE) and (source == PLATFORM_SOURCE_YOUTUBE):
             if api_key is None:
                 raise APIKeyRequired(platform)
-                
-            platform_provider = YouTubeYouTubeProvider(api_key, timeout)
+
+            platform_provider = YouTubeYouTubeProvider(api_key, timeout, caching)
         
         elif (platform == PLATFORM_ONLINE_NEWS) and (source == PLATFORM_SOURCE_WAYBACK_MACHINE):
-            platform_provider = OnlineNewsWaybackMachineProvider(base_url, timeout)
+            platform_provider = OnlineNewsWaybackMachineProvider(base_url, timeout, caching)
 
         elif (platform == PLATFORM_ONLINE_NEWS) and (source == PLATFORM_SOURCE_MEDIA_CLOUD):
-            platform_provider = OnlineNewsMediaCloudProvider(base_url, timeout)
+            platform_provider = OnlineNewsMediaCloudProvider(base_url, timeout, caching)
 
         else:
             raise UnknownProviderException(platform, source)
-        
+
         return platform_provider
     else:
         raise UnavailableProviderException(platform, source)
