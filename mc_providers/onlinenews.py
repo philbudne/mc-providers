@@ -13,6 +13,9 @@ from .provider import ContentProvider
 from .cache import CachingManager
 from .mediacloud import MCSearchApiClient
 
+# don't need a logger per Provider instance
+logger = logging.getLogger(__name__)
+
 class OnlineNewsAbstractProvider(ContentProvider):
     """
     All these endpoints accept a `domains: List[str]` keyword arg.
@@ -22,7 +25,6 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
     def __init__(self, base_url: Optional[str], timeout: Optional[int] = None, caching: bool = True):
         super().__init__(caching)
-        self._logger = logging.getLogger(__name__)
         self._base_url = base_url
         self._timeout = timeout
         self._client = self.get_client()
@@ -239,6 +241,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     
     @classmethod
     def _assembled_query_str(cls, query: str, **kwargs) -> str:
+        logger.debug("_assembled_query_str IN: %s %r", query, kwargs)
         # filter and/or domain clauses (selectors to be OR'ed together)
         selector_clauses = []
 
@@ -260,6 +263,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
             q = f"({query}) AND ({clauses_string})"
         else:
             q = query
+        logger.debug("_assembled_query_str OUT: %s", q)
         return q
 
     @classmethod
@@ -361,17 +365,19 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return "OnlineNewsMediaCloudProvider"
 
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
+        logger.debug("MC.count %s %s %s %r", query, start_date, end_date, kwargs)
         # no chunking on MC
-        q = self._assembled_query_str(query, **kwargs)
-        results = self._overview_query(q, start_date, end_date, **kwargs)
+        results = self._overview_query(query, start_date, end_date, **kwargs)
         if self._client._is_no_results(results):
+            logger.debug("MC.count: no results")
             return 0
-        return results['total']
+        count = results['total']
+        logger.debug("MC.count: %s", count)
+        return count
 
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
-        # no chunking on MC
-        q = self._assembled_query_str(query, **kwargs)
-        results = self._overview_query(q, start_date, end_date, **kwargs)
+        logger.debug("MC.count_over_time %s %s %s %r", query, start_date, end_date, kwargs)
+        results = self._overview_query(query, start_date, end_date, **kwargs)
         to_return: List[Dict]
         if self._client._is_no_results(results):
             to_return = []
@@ -387,46 +393,58 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                     'count': day_value,
                 })
         sorted_results = sorted(to_return, key=lambda x: x["timestamp"])
+        logger.debug("MC.count_over_time %d items", len(sorted_results))
         return {'counts': sorted_results}
 
     # NB: limit argument ignored, but included to keep mypy quiet
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20, **kwargs) -> List[Dict]:
-        # no chunking on MC
-        q = self._assembled_query_str(query, **kwargs)
-        results = self._overview_query(q, start_date, end_date, **kwargs)
+        logger.debug("MC.sample %s %s %s %r", query, start_date, end_date, kwargs)
+        results = self._overview_query(query, start_date, end_date, **kwargs)
         if self._client._is_no_results(results):
-            return []
-        return self._matches_to_rows(results['matches'])
+            rows = []
+        else:
+            rows = self._matches_to_rows(results['matches'])
+        logger.debug("MC.sample: %d rows", len(rows))
+        return rows
 
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
                   **kwargs) -> List[Dict]:
+        logger.debug("MC.languages %s %s %s %r", query, start_date, end_date, kwargs)
         q = self._assembled_query_str(query, **kwargs)
-        results = self._overview_query(q, start_date, end_date, **kwargs)
+        results = self._overview_query(query, start_date, end_date, **kwargs)
         if self._client._is_no_results(results):
             return []
         top_languages = [{'language': name, 'value': value, 'ratio': 0.0}
                          for name, value in results['toplangs'].items()]
+        logger.debug("MC.languages: _overview returned %d items", len(top_languages))
+
         # now normalize
         matching_count = self.count(query, start_date, end_date, **kwargs)
         for item in top_languages:
             item['ratio'] = item['value'] / matching_count
         # Sort by count
         top_languages = sorted(top_languages, key=lambda x: x['value'], reverse=True)
-        return top_languages[:limit]
+        items = top_languages[:limit]
+        logger.debug("MC.languages: returning %d items", len(items))
+        return items
 
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                 **kwargs) -> List[Dict]:
-        q = self._assembled_query_str(query, **kwargs)
-        results = self._overview_query(q, start_date, end_date, **kwargs)
+        logger.debug("MC.sources %s %s %s %r", query, start_date, end_date, kwargs)
+        results = self._overview_query(query, start_date, end_date, **kwargs)
         if self._client._is_no_results(results):
-            return []
-        cleaned_sources = [{"source": source, "count": count} for source, count in results['topdomains'].items()]
-        cleaned_sources = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
-        return cleaned_sources
+            items = []
+        else:
+            cleaned_sources = [{"source": source, "count": count} for source, count in results['topdomains'].items()]
+            items = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
+        logger.debug("MC.sources: %d items", len(items))
+        return items
 
-    # query string contains domains/filters at this point
-    @CachingManager.cache('overview', ['domains', 'filters'])
+    @CachingManager.cache('overview')
     def _overview_query(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
+        logger.debug("MC._overview %s %s %s %r", query, start_date, end_date, kwargs)
+
+        # no chunking on MC
         q = self._assembled_query_str(query, **kwargs)
 
         return self._client._overview_query(q, start_date, end_date, **kwargs)

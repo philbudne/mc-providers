@@ -13,6 +13,7 @@ ALL_RESERVED_CHARS = ['+', '\\', '-', '!', '(', ')', ':', '^', '[', ']', '"', '{
 # However, most query strings are using these characters on purpose, so let's only automatically escape some of them
 RARE_RESERVED_CHARS = ['/']
 
+logger = logging.getLogger(__name__)
 
 def sanitize_query(query: str, reserved_char_list: Optional[List[str]] = None) -> str:
     """
@@ -113,8 +114,11 @@ class MCSearchApiClient:
         return "publication_date:[{} TO {}]".format(start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
 
     def _overview_query(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
-        params = {"q": "{} AND {}".format(query, self._date_query_clause(start_date, end_date))}
+        logger.debug("_overview IN: %s %s %s %r", query, start_date, end_date, kwargs)
+        # protect query from grabby ANDs
+        params = {"q": "({}) AND {}".format(query, self._date_query_clause(start_date, end_date))}
         params.update(kwargs)
+        logger.debug("_overview params: %r", params)
         results, _ = self._query("{}/search/overview".format(self._collection), params, method='POST')
         return results
 
@@ -171,11 +175,13 @@ class MCSearchApiClient:
         """
         Centralize making the actual queries here for easy maintenance and testing of HTTP comms
         """
+        logger.debug("_query IN: %s ep %s par %s", method, endpoint, params)
         if params and ('domains' in params):  # remove domains param that might be dangling
             del params['domains']
         if params and ('q' in params):
             params['q'] = sanitize_query(params['q'])
         endpoint_url = self.API_BASE_URL+endpoint
+        logger.debug("_query SENDING %s ep %s par %r", method, endpoint_url, params)
         start = time.time()
         if method == 'GET':
             r = self._session.get(endpoint_url, params=params, timeout=self.TIMEOUT_SECS)
