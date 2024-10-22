@@ -410,7 +410,6 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
                   **kwargs) -> List[Dict]:
         logger.debug("MC.languages %s %s %s %r", query, start_date, end_date, kwargs)
-        q = self._assembled_query_str(query, **kwargs)
         results = self._overview_query(query, start_date, end_date, **kwargs)
         if self._client._is_no_results(results):
             return []
