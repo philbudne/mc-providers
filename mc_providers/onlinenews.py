@@ -507,7 +507,7 @@ _ALL_RESERVED_CHARS = set(r'+\-!():^[]"{}~*?|&/')
 # However, most query strings are using these characters on purpose, so let's only automatically escape some of them
 _RARE_RESERVED_CHARS = set('/')
 
-def _sanitize_query(query: str, all: bool = False) -> str:
+def _sanitize_es_query(query: str, all: bool = False) -> str:
     """
     from mc-providers/mc_providers/mediacloud.py
     Make sure we properly escape any reserved characters in an elastic search query
@@ -635,7 +635,7 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
         from news-search-api/api.py cs_basic_query
         """
         # only sanitize user query
-        sq = _sanitize_query(user_query)
+        sq = _sanitize_es_query(user_query)
         logger.debug("sanitized %s", sq)
 
         # TODO: isolate dates, domains, urls to filter context
