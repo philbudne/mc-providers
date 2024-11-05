@@ -501,6 +501,10 @@ import time
 
 import elasticsearch
 import mcmetadata.urls as urls
+from elasticsearch_dsl import Search
+from elasticsearch_dsl.aggs import RareTerms, Sampler, SignificantTerms, Terms
+from elasticsearch_dsl.query import Match, QueryString
+#from elasticsearch_dsl.types import FieldSort, SortOptions
 
 # These are all the characters used in elastic search queries, so they should NOT be included in your search str
 _ALL_RESERVED_CHARS = set(r'+\-!():^[]"{}~*?|&/')
@@ -593,17 +597,21 @@ else:
 PageTokenType = str       # ints returned as str
 
 if PAGE_SORT_FORMAT.startswith("epoch"):
-    # noop encode/decode for pure numbers
-    _encode_page_token = _decode_page_token = lambda x: x
+    def _encode_page_token(keys: list) -> str:
+        # could join multiple keys w/ separator
+        return keys[0]
+
+    def _decode_page_token(strng: str) -> list:
+        # could split apart joined string
+        return [strng]
+
 else:
-    # could also just remove/reinsert punctuation
-    # or parse and return number
     import base64
-    def _encode_page_token(strng: str):
-        return base64.b64encode(strng.encode(), b"-_").decode().replace("=", "~")
+    def _encode_page_token(keys: list) -> str:
+        return base64.b64encode(keys[0].encode(), b"-_").decode().replace("=", "~")
 
     def _decode_page_token(strng: str):
-        return base64.b64decode(strng.replace("~", "=").encode(), b"-_").decode()
+        return [base64.b64decode(strng.replace("~", "=").encode(), b"-_").decode()]
 
 def _get_hits(res: dict) -> list[dict]:
     return "hits" in res and res["hits"].get("hits", [])
@@ -629,8 +637,8 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
             fields.append("text_content")
         return fields
 
-    def _basic_query_dsl(self, user_query: str, start_date: dt.datetime, end_date: dt.datetime,
-                         expanded: bool = False, source: bool = True, **kwargs) -> dict:
+    def _basic_search(self, user_query: str, start_date: dt.datetime, end_date: dt.datetime,
+                     expanded: bool = False, source: bool = True, **kwargs) -> Search:
         """
         from news-search-api/api.py cs_basic_query
         """
@@ -638,37 +646,22 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
         sq = _sanitize_es_query(user_query)
         logger.debug("sanitized %s", sq)
 
-        # TODO: isolate dates, domains, urls to filter context
-
         # adds in canonical_domain/url query terms
+        # XXX TODO: move to a .filter!
         q = self._assembled_query_str(sq, **kwargs)
 
-        # handles date or datetime!
-        s = start_date.strftime("%Y-%m-%d")
-        e = end_date.strftime("%Y-%m-%d")
+        # works for date or datetime!
+        start = start_date.strftime("%Y-%m-%d")
+        end = end_date.strftime("%Y-%m-%d")
 
-        # protect query from grabby ANDs:
-        q = f"({q}) AND publication_date:[{s} TO {e}]"
-
-        # XXX maybe use elastic-dsl to construct query??
-        query = {
-            "query": {                         # search(query=...)
-                # e_dsl.query.QueryString(query=q, default_field="text_content", default_operator="and")
-                "query_string": {
-                    "default_field": "text_content",
-                    "default_operator": "AND",
-                    "query": q
-                }
-            }
-        }
+        s = Search(index=self._index_from_dates(start_date, end_date))\
+            .query(QueryString(query=q, default_field="text_content", default_operator="and"))\
+            .filter("range", publication_date={'gte': start, "lte": end})
 
         if source:
-            # search.source(self._fields(expanded))
-            query["_source"] = self._fields(expanded)
+            return s.source(self._fields(expanded))
         else:
-            # search.source(False)
-            query["_source"] = False
-        return query
+            return s.source(False)
 
     def _is_no_results(self, results) -> bool:
         """
@@ -684,11 +677,11 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
         """
         return [self.DEFAULT_COLLECTION]
 
-    def _query(self, start_date: dt.datetime | None, end_date: dt.datetime | None, body):
+    def _query(self, search: Search):
         """
         one place to send queries to ES, for logging
         """
-        logger.debug("MC._query %s %s %r", start_date, end_date, body)
+        logger.debug("MC._query %r", search.to_dict())
 
         # Will always (re)start at first server?  No state keeping
         # is possible with web-search (creates a new Provider instance
@@ -705,10 +698,12 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
         es = elasticsearch.Elasticsearch(eshosts, **esopts)
 
         t0 = time.monotonic()
-        res = es.search(index=self._index_from_dates(start_date, end_date), body=body)
+        r = search.using(es).execute()
         elapsed = time.monotonic() - t0
-        logger.debug("MC._query ES time %s ms (%.3f elapsed)", res.get("took", "err"), elapsed*1000)
-        if not _get_hits(res):
+        logger.debug("MC._query ES time %s ms (%.3f elapsed)", r.took, elapsed*1000)
+        if r.hits:
+            res = r.to_dict()   # XXX for now return dict
+        else:
             res = {}
 
         if self.LOG_FULL_RESULTS:
@@ -729,47 +724,25 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
         AGG_DOMAIN = "domain"
 
         # XXX maybe use elastic-dsl to construct query??
-        query = self._basic_query_dsl(q, start_date, end_date, expanded=False, **kwargs)
-        query["aggregations"] = {   # can be abbreviated as "aggs"?!
-            AGG_DAILY: {
-                # e_dsl.aggs.DateHistogram(field="publication_date", interval="day", min_doc_count=1)?
-                "date_histogram": {
-                    "field": "publication_date",
-                    "calendar_interval": "day",
-                    "min_doc_count": 1,
-                }
-            },
-            AGG_LANG: {
-                # e_dsl.aggs.Terms(field="language.keyword", size=100)?
-                "terms": {
-                    "field": "language.keyword",
-                    "size": 100
-                }
-            },
-            AGG_DOMAIN: {
-                # e_dsl.aggs.Terms(field="canonical_domain", size=100)?
-                "terms": {
-                    "field": "canonical_domain",
-                    "size": 100
-                }
-            },
-        }
-        # e_dsl search.extra(track_total_hits=True)?
-        query["track_total_hits"] =  True
-
-        res = self._query(start_date, end_date, query)
-        if not _get_hits(res):
+        search = self._basic_search(q, start_date, end_date, expanded=False, **kwargs)
+        search.aggs.bucket(AGG_DAILY, "date_histogram", field="publication_date",
+                           calendar_interval="day", min_doc_count=1)
+        search.aggs.bucket(AGG_LANG, "terms", field="language.keyword", size=100)
+        search.aggs.bucket(AGG_DOMAIN, "terms", field="canonical_domain", size=100)
+        search = search.extra(track_total_hits=True)
+        res = self._query(search)
+        hits = _get_hits(res)
+        if not hits:
             return {}           # checked by _is_no_results
 
-        hits = res["hits"]
         aggs = res["aggregations"]
         return {
             "query": q,
-            "total": hits["total"]["value"],
+            "total": res["hits"]["total"]["value"],
             "topdomains": _format_counts(aggs[AGG_DOMAIN]["buckets"]),
             "toplangs": _format_counts(aggs[AGG_LANG]["buckets"]),
             "dailycounts": _format_day_counts(aggs[AGG_DAILY]["buckets"]),
-            "matches": [_format_match(h) for h in hits["hits"]], # NOT double converted!!
+            "matches": [_format_match(h) for h in hits], # NOT double converted!!
         }
 
     def _terms(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
@@ -777,58 +750,31 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
         """
         only called internally, so no field/aggr checks
         """
-        q = self._basic_query_dsl(query, start_date, end_date, source=False, **kwargs)
-
         agg_name = "topterms"
+        sampler_name = "sample"
 
-        # for top & significant
-
-        if aggr in ("top", "significant"):
-            if aggr == "top":
-                terms = "terms" # aggs.Terms?
-            else:
-                terms = "significant_terms" # aggs.SignificantTerms?
-
-            agg_terms = {
-                terms: {
-                    "field": field,
-                    "size": 200,
-                    "min_doc_count": 10,
-                    "shard_min_doc_count": 5,
-                    # try excluding stop words w/ "exclude": list???
-                }
-            }
+        search = self._basic_search(query, start_date, end_date, source=False, **kwargs)
+        if aggr == "top":
+            agg_terms = Terms(field=field, size=200,
+                              min_doc_count=10, shard_min_doc_count=5)
+            shard_size = 500
+        elif aggr == "significant":
+            agg_terms = SignificantTerms(field=field, size=200,
+                                         min_doc_count=10, shard_min_doc_count=5)
             shard_size = 500
         elif aggr == "rare":
-            agg_terms = {
-                # aggs.RareTerms?
-                "rare_terms": {
-                    "field": field,
-                    "exclude": "[0-9].*"
-                }
-            }
+            agg_terms = RateTerms(field=field, exclude="[0-9].*")
             shard_size = 10
         else:
             raise ValueError(aggr)
 
-        # e_dsl search.extra(track_total_hits=True)?
-        q["track_total_hits"] = False
-        q["_source"] = False    # search.source(False)
-        q["aggregations"] = {   # also "aggs"?
-            "sample": {
-                # aggs.Sampler
-                "sampler": {
-                    "shard_size": shard_size
-                },
-                "aggregations": {
-                    agg_name: agg_terms
-                },
-            }
-        }
+        search.aggs.bucket(sampler_name,
+                           "sampler",
+                           shard_size=shard_size).aggs[agg_name] = agg_terms
 
-        res = self._query(start_date, end_date, q)
+        res = self._query(search)
         if (not _get_hits(res) or
-            not (buckets := res["aggregations"]["sample"][agg_name]["buckets"])):
+            not (buckets := res["aggregations"][sampler_name][agg_name]["buckets"])):
             return {}
 
         return _format_counts(buckets)
@@ -845,13 +791,10 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
 
     @CachingManager.cache()
     def item(self, item_id: str) -> Dict:
-        one_item = self._client.article(item_id)
-
-        query = {
-            "_source": {"includes": self._fields(True)},
-            "match": {"_id": item_id}
-        }
-        res = self._query(None, None, query)
+        s = Search(index=self.DEFAULT_COLLECTION)\
+            .query(Match(_id=item_id))\
+            .source(includes=self._fields(True)) # always includes full_text!!
+        res = self._query(s)
         hits = _get_hits(res)
         if len(hits) == 0:
             return {}
@@ -870,33 +813,30 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
         logger.debug("MC._paged_articles q: %s: %s e: %s xp: %s ps: %d pt: %r kw: %r",
                      q, start_date, end_date, expanded, page_size, pagination_token, kwargs)
 
-        query = self._basic_query_dsl(q, start_date, end_date, expanded=expanded, **kwargs)
-        query["size"] = page_size # E-DSL: search.extra(size=page_size)?
-
-        # e_dsl search.extra(track_total_hits=True)?
-        query["track_total_hits"] = False
-        query["sort"] = {       # e_dsl search.sort({KEY:VAL})?
-            # e_dsl.type.SortOptions?
-            PAGE_SORT_FIELD: {
-                # e_dsl.types.FieldSort?
-                "order": PAGE_SORT_ORDER,
-                "format": PAGE_SORT_FORMAT
-            }
-        }
+        search = self._basic_search(q, start_date, end_date, expanded=expanded, **kwargs)\
+                     .extra(size=page_size, track_total_hits=True)\
+                     .sort({
+                         # XXX types.SortOptions (not in 8.15.4)
+                         PAGE_SORT_FIELD: {
+                             # XXX types.FieldSort (not in 8.15.4)
+                             "order": PAGE_SORT_ORDER,
+                             "format": PAGE_SORT_FORMAT
+                         }
+                     })
         if pagination_token:
             # important to use `search_after` instead of 'from' for
             # memory reasons related to paging through more than 10k
             # results.
-            query["search_after"] = [_decode_page_token(pagination_token)]
+            search = search.extra(search_after=_decode_page_token(pagination_token))
 
-        res = self._query(None, None, query)
+        res = self._query(search)
         hits = _get_hits(res)
         if not hits:
             return ([], None)
 
         if len(hits) == page_size:
-            # primary sort key for last item
-            new_pt = _encode_page_token(hits[-1]["sort"][0])
+            # sort keys for last item
+            new_pt = _encode_page_token(hits[-1]["sort"])
         else:
             new_pt = None
 
