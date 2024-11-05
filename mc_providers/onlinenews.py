@@ -504,12 +504,20 @@ import mcmetadata.urls as urls
 from elasticsearch_dsl import Search
 from elasticsearch_dsl.aggs import RareTerms, Sampler, SignificantTerms, Terms
 from elasticsearch_dsl.query import Match, QueryString
-#from elasticsearch_dsl.types import FieldSort, SortOptions
+#from elasticsearch_dsl.types import FieldSort, SortOptions # not in 8.15 (yet?)
+from elasticsearch_dsl.utils import AttrDict
 
 # These are all the characters used in elastic search queries, so they should NOT be included in your search str
 _ALL_RESERVED_CHARS = set(r'+\-!():^[]"{}~*?|&/')
 # However, most query strings are using these characters on purpose, so let's only automatically escape some of them
 _RARE_RESERVED_CHARS = set('/')
+
+def _get(ad: AttrDict, key: str, default: Any = None) -> Any:
+    """
+    AttrDict doesn't have a "get" method; hide that here make it was
+    to switch back to _exec returning res.to_dict()
+    """
+    return getattr(ad, key, default)
 
 def _sanitize_es_query(query: str, all: bool = False) -> str:
     """
@@ -533,25 +541,21 @@ def _sanitize_es_query(query: str, all: bool = False) -> str:
     return ''.join(sanitized)
 
 
-def _format_match(hit: dict, expanded: bool = False) -> dict:
+def _format_match(hit: AttrDict, expanded: bool = False) -> dict:
     src = hit["_source"]
     res = {
-        "article_title": src.get("article_title"),
-        "normalized_article_title": src.get("normalized_article_title"),
-        "publication_date": src.get("publication_date")[:10]
-        if src.get("publication_date")
-        else None,
-        "indexed_date": src.get("indexed_date"),
-        "language": src.get("language"),
-        "full_langauge": src.get("full_language"),
-        "url": src.get("url"),
-        "normalized_url": src.get("normalized_url"), # not in ES?
-        "original_url": src.get("original_url"),
-        "canonical_domain": src.get("canonical_domain"),
-        "id": urls.unique_url_hash(src.get("url")), # !!
+        "article_title": _get(src, "article_title"),
+        "publication_date": _get(src, "publication_date", "")[:10] or None,
+        "indexed_date": _get(src, "indexed_date", None),
+        "language": _get(src, "language", None),
+        "full_langauge": _get(src, "full_language", None),
+        "url": _get(src, "url", None),
+        "original_url": _get(src, "original_url", None),
+        "canonical_domain": _get(src, "canonical_domain", None),
+        "id": hit["_id"]        # PB: was re-hash of url!
     }
     if expanded:
-        res["text_content"] = src.get("text_content")
+        res["text_content"] = _get(src, "text_content")
     return res
 
 def _format_day_counts(bucket: list):
@@ -569,13 +573,10 @@ def _format_counts(bucket: list):
     """
     return {item["key"]: item["doc_count"] for item in bucket}
 
-
-def _date_query_clause(start_date: dt.datetime, end_date: dt.datetime) -> str:
-    return "publication_date:[{} TO {}]".format(start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
-
 if False:
     # pub_date stored w/ single day granularity (so can only see one
-    # page of data per day!!!!), inserts past-date can happen at any
+    # page of data per day if more than page_size hits!!!!)
+    # inserts past-date can happen at any
     # time, (so sort order is not stable in time).
 
     # it looks like "pit" can be used to solve this?
@@ -613,8 +614,11 @@ else:
     def _decode_page_token(strng: str):
         return [base64.b64decode(strng.replace("~", "=").encode(), b"-_").decode()]
 
-def _get_hits(res: dict) -> list[dict]:
-    return "hits" in res and res["hits"].get("hits", [])
+def _get_hits(res: AttrDict) -> list[dict]:
+    h1 = _get(res, "hits")
+    if not h1:
+        return []
+    return _get(h1, "hits", [])
 
 class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
     """
@@ -622,7 +626,7 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
     direct to Elastic (skipping both the news-search-api server
     and mediacloud.py, the client library that talks to n-s-a)
     """
-    LOG_FULL_RESULTS = False    # log full _query results @ debug
+    LOG_FULL_RESULTS = False    # log full _exec results @ debug
 
     def get_client(self):
         # called from OnlineNewsAbstractProvider, to set _client, so
@@ -677,11 +681,11 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
         """
         return [self.DEFAULT_COLLECTION]
 
-    def _query(self, search: Search):
+    def _exec(self, search: Search) -> AttrDict:
         """
         one place to send queries to ES, for logging
         """
-        logger.debug("MC._query %r", search.to_dict())
+        logger.debug("MC._exec %r", search.to_dict())
 
         # Will always (re)start at first server?  No state keeping
         # is possible with web-search (creates a new Provider instance
@@ -698,16 +702,11 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
         es = elasticsearch.Elasticsearch(eshosts, **esopts)
 
         t0 = time.monotonic()
-        r = search.using(es).execute()
+        res = search.using(es).execute()
         elapsed = time.monotonic() - t0
-        logger.debug("MC._query ES time %s ms (%.3f elapsed)", r.took, elapsed*1000)
-        if r.hits:
-            res = r.to_dict()   # XXX for now return dict
-        else:
-            res = {}
-
+        logger.debug("MC._exec ES time %s ms (%.3f elapsed)", _get(res, "took", -1), elapsed*1000)
         if self.LOG_FULL_RESULTS:
-            logger.debug("MC._query returning %r", res) # can be VERY big for paged_articles!!!
+            logger.debug("MC._exec returning %r", res.to_dict()) # can be VERY big for paged_articles!!!
         return res
 
     @CachingManager.cache('overview')
@@ -723,14 +722,13 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
         AGG_LANG = "lang"
         AGG_DOMAIN = "domain"
 
-        # XXX maybe use elastic-dsl to construct query??
-        search = self._basic_search(q, start_date, end_date, expanded=False, **kwargs)
+        search = self._basic_search(q, start_date, end_date, **kwargs)
         search.aggs.bucket(AGG_DAILY, "date_histogram", field="publication_date",
                            calendar_interval="day", min_doc_count=1)
         search.aggs.bucket(AGG_LANG, "terms", field="language.keyword", size=100)
         search.aggs.bucket(AGG_DOMAIN, "terms", field="canonical_domain", size=100)
         search = search.extra(track_total_hits=True)
-        res = self._query(search)
+        res = self._exec(search)
         hits = _get_hits(res)
         if not hits:
             return {}           # checked by _is_no_results
@@ -772,7 +770,7 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
                            "sampler",
                            shard_size=shard_size).aggs[agg_name] = agg_terms
 
-        res = self._query(search)
+        res = self._exec(search)
         if (not _get_hits(res) or
             not (buckets := res["aggregations"][sampler_name][agg_name]["buckets"])):
             return {}
@@ -793,13 +791,13 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
     def item(self, item_id: str) -> Dict:
         s = Search(index=self.DEFAULT_COLLECTION)\
             .query(Match(_id=item_id))\
-            .source(includes=self._fields(True)) # always includes full_text!!
-        res = self._query(s)
+            .source(includes=self._fields(expanded=True)) # always includes full_text!!
+        res = self._exec(s)
         hits = _get_hits(res)
         if len(hits) == 0:
             return {}
 
-        # double translation?! UGH!
+        # double conversion!
         return self._match_to_row(_format_match(hits[0], True))
 
     def paged_items(
@@ -810,6 +808,11 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
             pagination_token: PageTokenType | None = None,
             **kwargs
     ) -> tuple[list[dict], PageTokenType | None]:
+        """
+        return a single page of data (with `page_size` items).
+        Pass `None` as first `pagination_token`, after that pass
+        value returned by previous call, until `None` returned.
+        """
         logger.debug("MC._paged_articles q: %s: %s e: %s xp: %s ps: %d pt: %r kw: %r",
                      q, start_date, end_date, expanded, page_size, pagination_token, kwargs)
 
@@ -829,18 +832,18 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
             # results.
             search = search.extra(search_after=_decode_page_token(pagination_token))
 
-        res = self._query(search)
+        res = self._exec(search)
         hits = _get_hits(res)
         if not hits:
             return ([], None)
 
         if len(hits) == page_size:
-            # sort keys for last item
+            # token is made from sort key(s) for last item
             new_pt = _encode_page_token(hits[-1]["sort"])
         else:
             new_pt = None
 
-        # UGH! double conversion!
+        # double conversion!
         rows = self._matches_to_rows([_format_match(h, expanded) for h in hits])
         return (rows, new_pt)
 
