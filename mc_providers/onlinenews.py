@@ -2,7 +2,7 @@ import datetime as dt
 import logging
 import random
 from collections import Counter
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 
 # PyPI
 import ciso8601
@@ -354,7 +354,7 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
         return "OnlineNewsWaybackMachineProvider"
 
 
-class OldOnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
+class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     """
     Provider interface to access new mediacloud-news-search archive. 
     All these endpoints accept a `domains: List[str]` keyword arg.
@@ -561,7 +561,7 @@ def _format_match(hit: AttrDict, expanded: bool = False) -> dict:
 def _format_day_counts(bucket: list):
     """
     from news-search-api/api.py
-    translate ES response to NSA response format
+    used to format "dailycounts"
     """
     return {item["key_as_string"][:10]: item["doc_count"] for item in bucket}
 
@@ -569,58 +569,33 @@ def _format_day_counts(bucket: list):
 def _format_counts(bucket: list):
     """
     from news-search-api/api.py
-    translate ES response to NSA response format
+    used to format "topdomains" & "toplangs"
     """
     return {item["key"]: item["doc_count"] for item in bucket}
 
-if False:
-    # pub_date stored w/ single day granularity (so can only see one
-    # page of data per day if more than page_size hits!!!!)
-    # inserts past-date can happen at any
-    # time, (so sort order is not stable in time).
-
-    # it looks like "pit" can be used to solve this?
-    # https://www.elastic.co/guide/en/elasticsearch/reference/current/paginate-search-results.html#scroll-search-results
-    PAGE_SORT_FIELD = "publication_date"
-    PAGE_SORT_FORMAT = "basic_date_time_no_millis"
-    PAGE_SORT_ORDER = "desc"
-else:
-    # indexed_date is declared as a "date" field, and as such, should
-    # only have millisecond granularity (much better than pub_date,
-    # which has one day granulatity). We send in
-    # datetime.utcnow().isoformat() (with microseconds) and they
-    # _seem_ to come back with microseconds, which would make
-    # "epoch_micros" preferable
-    PAGE_SORT_FIELD = "indexed_date"
-    PAGE_SORT_FORMAT = "epoch_millis"
-    PAGE_SORT_ORDER = "asc"
+_DEF_PAGE_SORT_FIELD = "indexed_date"
+_DEF_PAGE_SORT_ORDER = "desc"
 
 PageTokenType = str       # ints returned as str
 
-if PAGE_SORT_FORMAT.startswith("epoch"):
-    def _encode_page_token(keys: list) -> str:
-        # could join multiple keys w/ separator
-        return keys[0]
+def _b64_encode_page_token(strng: str) -> str:
+    return base64.b64encode(strng.encode(), b"-_").decode().replace("=", "~")
 
-    def _decode_page_token(strng: str) -> list:
-        # could split apart joined string
-        return [strng]
+def _b64_decode_page_token(strng: str) -> str:
+    return [base64.b64decode(strng.replace("~", "=").encode(), b"-_").decode()]
 
-else:
-    import base64
-    def _encode_page_token(keys: list) -> str:
-        return base64.b64encode(keys[0].encode(), b"-_").decode().replace("=", "~")
-
-    def _decode_page_token(strng: str):
-        return [base64.b64decode(strng.replace("~", "=").encode(), b"-_").decode()]
-
-def _get_hits(res: AttrDict) -> list[dict]:
+def _get_hits(res: AttrDict) -> list[AttrDict]:
+    """
+    retrieve hits array from _exec results
+    """
     h1 = _get(res, "hits")
     if not h1:
         return []
     return _get(h1, "hits", [])
 
-class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
+_ES_MAXPAGE = 1000
+
+class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     """
     experimental/temporary version of MC Provider going
     direct to Elastic (skipping both the news-search-api server
@@ -740,7 +715,7 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
             "topdomains": _format_counts(aggs[AGG_DOMAIN]["buckets"]),
             "toplangs": _format_counts(aggs[AGG_LANG]["buckets"]),
             "dailycounts": _format_day_counts(aggs[AGG_DAILY]["buckets"]),
-            "matches": [_format_match(h) for h in hits], # NOT double converted!!
+            "matches": [_format_match(h) for h in hits], # _match_to_row called in .sample()
         }
 
     def _terms(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
@@ -803,34 +778,76 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
     def paged_items(
             self, q: str,
             start_date: dt.datetime, end_date: dt.datetime,
-            expanded: bool = False,
-            page_size: int = 1000,
-            pagination_token: PageTokenType | None = None,
+            page_size: int = _ES_MAXPAGE,
             **kwargs
     ) -> tuple[list[dict], PageTokenType | None]:
         """
         return a single page of data (with `page_size` items).
         Pass `None` as first `pagination_token`, after that pass
         value returned by previous call, until `None` returned.
+
+        `kwargs` may contain: `sort_field` (str), `sort_order` (str)
         """
-        logger.debug("MC._paged_articles q: %s: %s e: %s xp: %s ps: %d pt: %r kw: %r",
-                     q, start_date, end_date, expanded, page_size, pagination_token, kwargs)
+        logger.debug("MC._paged_articles q: %s: %s e: %s ps: %d kw: %r",
+                     q, start_date, end_date, page_size, kwargs)
+
+        page_size = max(page_size, _ES_MAXPAGE)
+        expanded = kwargs.pop("expanded", False)
+        page_sort_field = kwargs.pop("page_sort_field", _DEF_PAGE_SORT_FIELD)
+        page_sort_order = kwargs.pop("page_sort_order", _DEF_PAGE_SORT_ORDER)
+        pagination_token = kwargs.pop("pagination_token", None)
+
+        if page_sort_field not in self._fields(expanded):
+            raise ValueError(page_sort_field)
+
+        if page_sort_order not in ["asc", "desc"]:
+            raise ValueError(page_sort_order)
+
+        if kwargs:
+            extra_keys = set(kwargs) - {'domains', 'filters'}
+            if extra_keys:
+                exstring = ", ".join(extra_keys)
+                raise TypeError(f"unknown keyword args: {exstring}")
+
+        _encode_page_token = _b64_encode_page_token
+        _decode_page_token = _b64_decode_page_token
+
+        page_sort_format = None
+        if page_sort_field == "publication_date":
+            page_sort_format = "basic_date" # YYYYMMDD (no need for encoding)
+        elif page_sort_field == "indexed_date":
+            # "date" fields are _supposed_ to be stored as milliseconds,
+            # but supplied values have microseconds, and stored
+            # values seem to be returned with them?!
+            page_sort_format = "epoch_millis"
+
+            # numeric string: no encoding needed
+            # (unless obfuscation is the goal)
+            _encode_page_token = str
+            _decode_page_token = int
+
+        if page_sort_format:
+            sort_opts = {
+                # XXX types.SortOptions (not in 8.15.4)
+                page_sort_field: {
+                    # XXX types.FieldSort (not in 8.15.4)
+                    "order": page_sort_order,
+                    "format": page_sort_format
+                }
+            }
+        else:
+            sort_opts = {page_sort_field: page_sort_order}
+
+        print("sort_opts", sort_opts)
 
         search = self._basic_search(q, start_date, end_date, expanded=expanded, **kwargs)\
                      .extra(size=page_size, track_total_hits=True)\
-                     .sort({
-                         # XXX types.SortOptions (not in 8.15.4)
-                         PAGE_SORT_FIELD: {
-                             # XXX types.FieldSort (not in 8.15.4)
-                             "order": PAGE_SORT_ORDER,
-                             "format": PAGE_SORT_FORMAT
-                         }
-                     })
+                     .sort(sort_opts)
         if pagination_token:
             # important to use `search_after` instead of 'from' for
             # memory reasons related to paging through more than 10k
             # results.
-            search = search.extra(search_after=_decode_page_token(pagination_token))
+            search = search.extra(search_after=[_decode_page_token(pagination_token)])
 
         res = self._exec(search)
         hits = _get_hits(res)
@@ -838,8 +855,8 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
             return ([], None)
 
         if len(hits) == page_size:
-            # token is made from sort key(s) for last item
-            new_pt = _encode_page_token(hits[-1]["sort"])
+            # token is made from first/only sort key value for last item
+            new_pt = _encode_page_token(hits[-1]["sort"][0])
         else:
             new_pt = None
 
@@ -849,7 +866,7 @@ class OnlineNewsMediaCloudProvider(OldOnlineNewsMediaCloudProvider):
 
     def all_items(self, query: str,
                   start_date: dt.datetime, end_date: dt.datetime,
-                  page_size: int = 1000, **kwargs):
+                  page_size: int = _ES_MAXPAGE, **kwargs):
         """
         returns generator of pages (lists) of items
         """
