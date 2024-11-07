@@ -92,7 +92,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
                 yield self._matches_to_rows(page)
 
     def paged_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs)\
-            -> tuple[List[Dict], str] :
+            -> tuple[List[Dict], Optional[str]] :
         """
         Note - this is not chunk'd so you can't run giant queries page by page... use `all_items` instead.
         This kwargs should include `pagination_token`, which will get relayed in to the api client and fetch
@@ -582,7 +582,7 @@ def _b64_encode_page_token(strng: str) -> str:
     return base64.b64encode(strng.encode(), b"-_").decode().replace("=", "~")
 
 def _b64_decode_page_token(strng: str) -> str:
-    return [base64.b64decode(strng.replace("~", "=").encode(), b"-_").decode()]
+    return base64.b64decode(strng.replace("~", "=").encode(), b"-_").decode()
 
 def _get_hits(res: AttrDict) -> list[AttrDict]:
     """
@@ -665,16 +665,10 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         # Will always (re)start at first server?  No state keeping
         # is possible with web-search (creates a new Provider instance
         # for each query).  Maybe shuffle the list??
-        eshosts = self._base_url.split(",") # comma separated list of http://SERVER:PORT
+        eshosts = (self._base_url or "").split(",") # comma separated list of http://SERVER:PORT
         if not eshosts:
             raise ValueError("no ES url(s)")
-        esopts = {
-            "max_retries": 3
-        }
-        timeout = self._timeout
-        if timeout is not None:
-            esopts["request_timeout"] = timeout
-        es = elasticsearch.Elasticsearch(eshosts, **esopts)
+        es = elasticsearch.Elasticsearch(eshosts, request_timeout=self._timeout, max_retries=3)
 
         t0 = time.monotonic()
         res = search.using(es).execute()
@@ -736,7 +730,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                                          min_doc_count=10, shard_min_doc_count=5)
             shard_size = 500
         elif aggr == "rare":
-            agg_terms = RateTerms(field=field, exclude="[0-9].*")
+            agg_terms = RareTerms(field=field, exclude="[0-9].*")
             shard_size = 10
         else:
             raise ValueError(aggr)
@@ -776,11 +770,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         return self._match_to_row(_format_match(hits[0], True))
 
     def paged_items(
-            self, q: str,
+            self, query: str,
             start_date: dt.datetime, end_date: dt.datetime,
             page_size: int = _ES_MAXPAGE,
             **kwargs
-    ) -> tuple[list[dict], PageTokenType | None]:
+    ) -> tuple[list[dict], Optional[PageTokenType]]:
         """
         return a single page of data (with `page_size` items).
         Pass `None` as first `pagination_token`, after that pass
@@ -789,7 +783,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         `kwargs` may contain: `sort_field` (str), `sort_order` (str)
         """
         logger.debug("MC._paged_articles q: %s: %s e: %s ps: %d kw: %r",
-                     q, start_date, end_date, page_size, kwargs)
+                     query, start_date, end_date, page_size, kwargs)
 
         page_size = max(page_size, _ES_MAXPAGE)
         expanded = kwargs.pop("expanded", False)
@@ -823,8 +817,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
             # numeric string: no encoding needed
             # (unless obfuscation is the goal)
-            _encode_page_token = str
-            _decode_page_token = int
+            _encode_page_token = _decode_page_token = lambda x: x
 
         if page_sort_format:
             sort_opts = {
@@ -840,7 +833,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         print("sort_opts", sort_opts)
 
-        search = self._basic_search(q, start_date, end_date, expanded=expanded, **kwargs)\
+        search = self._basic_search(query, start_date, end_date, expanded=expanded, **kwargs)\
                      .extra(size=page_size, track_total_hits=True)\
                      .sort(sort_opts)
         if pagination_token:
@@ -852,13 +845,13 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         res = self._exec(search)
         hits = _get_hits(res)
         if not hits:
-            return ([], None)
+            return ([], "")
 
         if len(hits) == page_size:
             # token is made from first/only sort key value for last item
             new_pt = _encode_page_token(hits[-1]["sort"][0])
         else:
-            new_pt = None
+            new_pt = ""
 
         # double conversion!
         rows = self._matches_to_rows([_format_match(h, expanded) for h in hits])
