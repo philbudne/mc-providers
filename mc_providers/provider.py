@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 import datetime as dt
 import datetime
 from operator import itemgetter
@@ -21,11 +21,11 @@ class ContentProvider(ABC):
     Any unimplemented methods raise an Exception
     """
 
-    def __init__(self, caching: Optional[bool] = True):
+    def __init__(self, caching: Optional[Union[bool,int]] = 1):
         self._logger = logging.getLogger(__name__)
         if caching is None:
-            caching = True
-        self._caching = caching
+            caching = 1
+        self._caching = caching # -1 means suppress caching in OUR provider!
 
     def everything_query(self) -> str:
         raise QueryingEverythingUnsupportedQuery()

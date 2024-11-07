@@ -671,6 +671,16 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         es = elasticsearch.Elasticsearch(eshosts, request_timeout=self._timeout, max_retries=3)
 
         t0 = time.monotonic()
+        if self._caching < 0:
+            # Here to try to force ES not to use cached results (for testing).
+            # .execute(ignore_cache=True) only effects in-library caching; this
+            # puts ?request_cache=false on the request URL, which
+            # https://www.elastic.co/guide/en/elasticsearch/reference/current/shard-request-cache.html
+            # says "The request_cache query-string parameter can be used to
+            # enable or disable caching on a per-request basis. If set, it
+            # overrides the index-level setting"
+            search = search.params(request_cache=False)
+
         res = search.using(es).execute()
         elapsed = time.monotonic() - t0
         logger.debug("MC._exec ES time %s ms (%.3f elapsed)", _get(res, "took", -1), elapsed*1000)
@@ -803,9 +813,6 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                 exstring = ", ".join(extra_keys)
                 raise TypeError(f"unknown keyword args: {exstring}")
 
-        _encode_page_token = _b64_encode_page_token
-        _decode_page_token = _b64_decode_page_token
-
         page_sort_format = None
         if page_sort_field == "publication_date":
             page_sort_format = "basic_date" # YYYYMMDD (no need for encoding)
@@ -815,9 +822,14 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # values seem to be returned with them?!
             page_sort_format = "epoch_millis"
 
+        if page_sort_format:
             # numeric string: no encoding needed
             # (unless obfuscation is the goal)
             _encode_page_token = _decode_page_token = lambda x: x
+        else:
+            _encode_page_token = _b64_encode_page_token
+            _decode_page_token = _b64_decode_page_token
+
 
         if page_sort_format:
             sort_opts = {
@@ -830,8 +842,6 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             }
         else:
             sort_opts = {page_sort_field: page_sort_order}
-
-        print("sort_opts", sort_opts)
 
         search = self._basic_search(query, start_date, end_date, expanded=expanded, **kwargs)\
                      .extra(size=page_size, track_total_hits=True)\
