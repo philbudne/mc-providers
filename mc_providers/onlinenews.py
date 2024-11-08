@@ -530,43 +530,12 @@ from elasticsearch_dsl.query import Match, QueryString
 #from elasticsearch_dsl.types import FieldSort, SortOptions # not in 8.15 (yet?)
 from elasticsearch_dsl.utils import AttrDict
 
-# These are all the characters used in elastic search queries, so they should NOT be included in your search str
-_ALL_RESERVED_CHARS = set(r'+\-!():^[]"{}~*?|&/')
-# However, most query strings are using these characters on purpose, so let's only automatically escape some of them
-_RARE_RESERVED_CHARS = set('/')
-
 def _get(ad: AttrDict, key: str, default: Any = None) -> Any:
     """
-    AttrDict doesn't have a "get" method; hide that here make it was
-    to switch back to _exec returning res.to_dict()
+    AttrDict doesn't have a "get" method; hide that here to make it
+    easy to switch back to _exec returning res.to_dict() if needed...
     """
     return getattr(ad, key, default)
-
-def _sanitize_es_query(query: str, all: bool = False) -> str:
-    """
-    from mc-providers/mc_providers/mediacloud.py
-
-    Make sure we properly escape any reserved characters in an elastic search query
-    @see https://www.elastic.co/guide/en/elasticsearch/reference/7.17/query-dsl-query-string-query.html#_reserved_characters
-    :param query: a full query string
-    :param all: True to escape all reserved characters
-    :return: str
-
-    NOTE! right now quoting may be being done in web-search??  At the
-    very least, The ContentProvider class should expose a (static?)
-    method, so there is less provider specific knowledge in client code.
-    """
-    if all:
-        reserved = _ALL_RESERVED_CHARS
-    else:
-        reserved = _RARE_RESERVED_CHARS
-    sanitized = []
-    for char in query:
-        if char in reserved:
-            sanitized.append("\\") # r"\" doesn't work!
-        sanitized.append(char)
-    ret = ''.join(sanitized)
-    return ret
 
 def _format_match(hit: AttrDict, expanded: bool = False) -> dict:
     src = hit["_source"]
@@ -598,7 +567,7 @@ def _format_day_counts(bucket: list) -> dict[str, int]:
 
 def _format_counts(bucket: list) -> dict[str, int]:
     """
-    from news-search-api/api.py;
+    from news-search-api/api.py
     used to format "topdomains" & "toplangs"
 
     takes [{"key": key, "doc_count": doc_count}, ....]
@@ -665,7 +634,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         create a elasticsearch_dsl query from user_query date range and kwargs
         """
         # only sanitize user query
-        sq = _sanitize_es_query(user_query)
+        sq = self._sanitize_query(user_query)
         logger.debug("_basic_query %s sanitize %s", user_query, sq)
 
         # adds in canonical_domain/url query terms
