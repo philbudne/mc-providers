@@ -2,12 +2,12 @@ import datetime as dt
 import logging
 import random
 from collections import Counter
-from typing import Any, List, Dict, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 # PyPI
 import ciso8601
 import dateparser
-import numpy as np
+import numpy as np              # for chunking
 from waybacknews.searchapi import SearchApiClient
 
 from .language import stopwords_for_language
@@ -103,11 +103,25 @@ class OnlineNewsAbstractProvider(ContentProvider):
         page, pagination_token = self._client.paged_articles(query, start_date, end_date, **kwargs)
         return self._matches_to_rows(page), pagination_token
 
-    def _words(self, query: str, start_date: dt.datetime, end_date: dt.datetime) -> Dict:
-        logger.debug("AP._words %s %s %s", query, start_date, end_date)
-        return self._client.terms(query, start_date, end_date,
-                                  self._client.TERM_FIELD_TITLE,
-                                  self._client.TERM_AGGREGATION_TOP)
+    def _word_counts(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Mapping:
+        logger.debug("AP._word_counts %s %s %s %r", query, start_date, end_date, kwargs)
+
+        chunked_queries = self._assemble_and_chunk_query_str(query, **kwargs)
+
+        # An accumulator for the subqueries
+        totals: Counter = Counter()
+
+        for subquery in chunked_queries:
+            logger.debug("AP.words subquery %s %s %s", subquery, start_date, end_date)
+
+            this_results = self._client.terms(subquery, start_date, end_date,
+                                              self._client.TERM_FIELD_TITLE,
+                                              self._client.TERM_AGGREGATION_TOP)
+            if "detail" not in this_results:
+                if self.DEBUG_WORDS:
+                    logger.debug("AP.words results %s", this_results)
+                totals += Counter(this_results)
+        return totals
 
     # Chunk'd
     @CachingManager.cache()
@@ -143,23 +157,9 @@ class OnlineNewsAbstractProvider(ContentProvider):
                 logger.warning("error getting stop words for %s: %e", lang, e)
 
         # for now just return top terms in article titles
-        sample_size = 5000
+        sample_size = 5000      # PB: only used for scaling???
         
-        chunked_queries = self._assemble_and_chunk_query_str(query, **kwargs)
-
-        # An accumulator for the subqueries
-        results_counter: Counter = Counter({})
-        for subquery in chunked_queries:
-            logger.debug("AP.words subquery %s %s %s", subquery, start_date, end_date)
-
-            # XXX doing direct ES queryies, is it possible to put stop words filter into query??
-            this_results = self._words(subquery, start_date, end_date)
-            
-            if "detail" not in this_results:
-                if self.DEBUG_WORDS:
-                    logger.debug("AP.words results %s", this_results)
-                results_counter += Counter(this_results)
-
+        results_counter = self._word_counts(query, start_date, end_date, **kwargs)
         if self.DEBUG_WORDS > 1:
             logger.debug("AP.words total %r", results_counter)
             for t, c in results_counter.items():
@@ -272,7 +272,14 @@ class OnlineNewsAbstractProvider(ContentProvider):
             queries = domain_queries + filter_queries
         
         return queries
-    
+
+    @staticmethod
+    def _sanitize_query(fstr: str) -> str:
+        """
+        noop: (/ quoting done in mediacloud.py sanitize_query)
+        """
+        return fstr
+
     @classmethod
     def _assembled_query_str(cls, query: str, **kwargs) -> str:
         logger.debug("_assembled_query_str IN: %s %r", query, kwargs)
@@ -281,19 +288,35 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
         domains = kwargs.get('domains', [])
         if len(domains) > 0:
-            domain_string = " OR ".join(domains)
-            selector_clauses.append(f"{cls.domain_search_string()}:({domain_string})")
+            domain_strings = " OR ".join(domains)
+            selector_clauses.append(f"{cls.domain_search_string()}:({domain_strings})")
             
         # put all filters in single query string
+        # they're additive, so "selectors" might have been a clearer name?
         filters = kwargs.get('filters', [])
         if len(filters) > 0:
-            selector_clauses.append(" OR ".join(filters))
+            for filter in filters:
+                f = cls._sanitize_query(filter)
+                if "AND" in f:
+                    # parenthesize if any chance it has a grabby AND.
+                    selector_clauses.append(f"({f})")
+                else:
+                    selector_clauses.append(f)
+
+        # PB: experimental to get web-search out of query formatting biz
+        # (to be able to put selectors in a filter context)
+        url_search_strings: list[tuple[str,str]] = kwargs.get('url_search_strings', [])
+        if url_search_strings:
+            for cdom, sstr in url_search_strings:
+                usf = rf"(canonical_domain:{cdom} AND url:(http\://{sstr} OR https\://{sstr}))"
+                # NOTE: unclear if canonical_domain check of any benefit.  simplified:
+                #usf = rf"url:(http\://{sstr} OR https\://{sstr})"
+                selector_clauses.append(cls._sanitize_query(usf))
 
         if len(selector_clauses) > 0:
-            # generalized to any number of clauses (keep an open mind about sanity clause)
-            # Add parens around user query and each clause to defend ORs
-            # against grabby ANDs:
-            clauses_string = " OR ".join([f"({clause})" for clause in selector_clauses])
+            # Add parens around user query to protect against against grabby ANDs
+            # (individual selector_clauses have been parenthesized if needed)
+            clauses_string = " OR ".join(selector_clauses)
             q = f"({query}) AND ({clauses_string})"
         else:
             q = query
@@ -522,24 +545,28 @@ def _get(ad: AttrDict, key: str, default: Any = None) -> Any:
 def _sanitize_es_query(query: str, all: bool = False) -> str:
     """
     from mc-providers/mc_providers/mediacloud.py
+
     Make sure we properly escape any reserved characters in an elastic search query
     @see https://www.elastic.co/guide/en/elasticsearch/reference/7.17/query-dsl-query-string-query.html#_reserved_characters
     :param query: a full query string
-    :param reserved_char_list: characters that need escaping
-    :return:
+    :param all: True to escape all reserved characters
+    :return: str
+
+    NOTE! right now quoting may be being done in web-search??  At the
+    very least, The ContentProvider class should expose a (static?)
+    method, so there is less provider specific knowledge in client code.
     """
     if all:
         reserved = _ALL_RESERVED_CHARS
     else:
-        reserved = _RARE_RESERVED_CHARS # NOTE! right now quoting being done in web-search??
+        reserved = _RARE_RESERVED_CHARS
     sanitized = []
     for char in query:
         if char in reserved:
-            sanitized.append('\\%s' % char)
-        else:
-            sanitized.append(char)
-    return ''.join(sanitized)
-
+            sanitized.append("\\") # r"\" doesn't work!
+        sanitized.append(char)
+    ret = ''.join(sanitized)
+    return ret
 
 def _format_match(hit: AttrDict, expanded: bool = False) -> dict:
     src = hit["_source"]
@@ -558,21 +585,29 @@ def _format_match(hit: AttrDict, expanded: bool = False) -> dict:
         res["text_content"] = _get(src, "text_content")
     return res
 
-def _format_day_counts(bucket: list):
+def _format_day_counts(bucket: list) -> dict[str, int]:
     """
-    from news-search-api/api.py
+    from news-search-api/api.py;
     used to format "dailycounts"
+
+    takes [{"key": key, "doc_count": doc_count}, ....]
+    and returns {key: count, ....}
     """
     return {item["key_as_string"][:10]: item["doc_count"] for item in bucket}
 
 
-def _format_counts(bucket: list):
+def _format_counts(bucket: list) -> dict[str, int]:
     """
-    from news-search-api/api.py
+    from news-search-api/api.py;
     used to format "topdomains" & "toplangs"
+
+    takes [{"key": key, "doc_count": doc_count}, ....]
+    and returns {key: count, ....}
     """
     return {item["key"]: item["doc_count"] for item in bucket}
 
+# was published_date, but it's awful for pagination
+# (can only return a single page per day!)
 _DEF_PAGE_SORT_FIELD = "indexed_date"
 _DEF_PAGE_SORT_ORDER = "desc"
 
@@ -609,6 +644,13 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         # catch any attempts to use it!
         return None
 
+    @staticmethod
+    def _sanitize_query(fstr: str) -> str:
+        """
+        Do quoting done by _sanitize_es_query in mediacloud.py
+        """
+        return fstr.replace("/", r"\/")
+
     def _fields(self, expanded) -> list[str]:
         fields = ["article_title", "publication_date", "indexed_date",
                   "language", "full_language", "canonical_domain", "url", "original_url"]
@@ -620,10 +662,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                      expanded: bool = False, source: bool = True, **kwargs) -> Search:
         """
         from news-search-api/api.py cs_basic_query
+        create a elasticsearch_dsl query from user_query date range and kwargs
         """
         # only sanitize user query
         sq = _sanitize_es_query(user_query)
-        logger.debug("sanitized %s", sq)
+        logger.debug("_basic_query %s sanitize %s", user_query, sq)
 
         # adds in canonical_domain/url query terms
         # XXX TODO: move to a .filter!
@@ -756,7 +799,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         return _format_counts(buckets)
 
-    def _words(self, query: str, start_date: dt.datetime, end_date: dt.datetime) -> Dict:
+    def _word_counts(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Mapping:
         """
         called by OnlineNewsAbstractProvider.words
         """
@@ -764,7 +807,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         agg = "top"             # also: significant & rare
 
         logger.debug("MC._words %s %s %s", query, start_date, end_date)
-        return self._terms(query, start_date, end_date, field, agg)
+        # XXX doing direct ES queries, is it possible to put stop words filter into query??
+        return self._terms(query, start_date, end_date, field, agg, **kwargs)
 
     @CachingManager.cache()
     def item(self, item_id: str) -> Dict:
@@ -829,7 +873,6 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         else:
             _encode_page_token = _b64_encode_page_token
             _decode_page_token = _b64_decode_page_token
-
 
         if page_sort_format:
             sort_opts = {
