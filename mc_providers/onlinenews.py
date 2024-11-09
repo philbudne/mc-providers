@@ -281,9 +281,13 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return fstr
 
     @classmethod
-    def _assembled_query_str(cls, query: str, **kwargs) -> str:
-        logger.debug("_assembled_query_str IN: %s %r", query, kwargs)
-        # filter and/or domain clauses (selectors to be OR'ed together)
+    def _selector_query_clauses(cls, kwargs: dict) -> str:
+        """
+        take domains, filters, url_search_strings as kwargs
+        return a list of query_strings to be OR'ed together
+        (to be AND'ed with user query or used as a filter)
+        """
+        logger.debug("AP._selector_query_clauses IN: %r", kwargs)
         selector_clauses = []
 
         domains = kwargs.get('domains', [])
@@ -292,7 +296,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
             selector_clauses.append(f"{cls.domain_search_string()}:({domain_strings})")
             
         # put all filters in single query string
-        # they're additive, so "selectors" might have been a clearer name?
+        # they're additive, so "selectors" might have been clearer?
         filters = kwargs.get('filters', [])
         if len(filters) > 0:
             for filter in filters:
@@ -302,33 +306,23 @@ class OnlineNewsAbstractProvider(ContentProvider):
                     selector_clauses.append(f"({f})")
                 else:
                     selector_clauses.append(f)
+        logger.debug("AP._selector_query_clauses OUT: %s", selector_clauses)
+        return selector_clauses
 
-        # PB: experimental, to try to get web-search out of query
-        # formatting biz
-        url_search_strings: list[tuple[str,str]] = kwargs.get('url_search_strings', [])
-        if url_search_strings:
-            # NOTE! depends on search string:
-            # 1. starting with fully qualified domain name WITHOUT http:// or https://
-            # 2. ending with "*"
+    @classmethod
+    def _selector_query_string(cls, kwargs: dict) -> str:
+        """
+        takes kwargs (as dict) return a query_string to be AND'ed with
+        user query or used as a filter.
+        """
+        return " OR ".join(cls._selector_query_clauses(kwargs)) # takes dict
 
-            # It's at least POSSIBLE that making "url" a "wildcard"
-            # field could make leading wildcards a possibility, which
-            # would be wonderful, 'cause it's painful trying to
-            # explain how to come up with a proper search string!!!
-            for cdom, sstr in url_search_strings:
-                # NOTE: unclear if canonical_domain check of any benefit!
-                if True:
-                    usf = f"(canonical_domain:{cdom} AND url:(http\\://{sstr} OR https\\://{sstr}))"
-                else:
-                    usf = f"url:(http\://{sstr} OR https\\://{sstr})"
-                # sanitize here to avoid search string (and above) from needing quoted /'s!
-                selector_clauses.append(cls._sanitize_query(usf))
-
-        if len(selector_clauses) > 0:
-            # Add parens around user query to protect against against grabby ANDs
-            # (individual selector_clauses have been parenthesized if needed)
-            clauses_string = " OR ".join(selector_clauses)
-            q = f"({query}) AND ({clauses_string})"
+    @classmethod
+    def _assembled_query_str(cls, query: str, **kwargs) -> str:
+        logger.debug("_assembled_query_str IN: %s %r", query, kwargs)
+        sqs = cls._selector_query_string(kwargs) # takes dict
+        if sqs:
+            q = f"({query}) AND ({sqs})"
         else:
             q = query
         logger.debug("_assembled_query_str OUT: %s", q)
@@ -437,6 +431,43 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         used to test _overview_query results
         """
         return self._client._is_no_results(results)
+
+
+    @classmethod
+    def _selector_query_clauses(cls, kwargs: dict) -> str:
+        """
+        take domains, filters, url_search_strings as kwargs
+        return a list of query_strings to be OR'ed together
+        (to be AND'ed with user query or used as a filter)
+        """
+        logger.debug("MC._selector_query_clauses IN: %r", kwargs)
+        selector_clauses = super()._selector_query_clauses(kwargs)
+
+        # PB: experimental, to try to get web-search out of query
+        # formatting biz.  XXX TODO: suppress this for Internet Archive!!!
+        # Either a boolean class member/method or a simpler version
+        # here in the base class!!!
+        url_search_strings: list[tuple[str,str]] = kwargs.get('url_search_strings', [])
+        if url_search_strings:
+            # NOTE! depends on search string:
+            # 1. starting with fully qualified domain name WITHOUT http:// or https://
+            # 2. ending with "*"
+
+            # It's at least POSSIBLE that making "url" a "wildcard"
+            # field could make leading wildcards a possibility, which
+            # would be wonderful, 'cause it's painful trying to
+            # explain how to come up with a proper search string!!!
+            domain_field = cls.domain_search_string()
+            for cdom, sstr in url_search_strings:
+                if True:
+                    # NOTE: unclear if domain_field check of any benefit!!!
+                    usf = f"({domain_field}:{cdom} AND url:(http\\://{sstr} OR https\\://{sstr}))"
+                else:
+                    usf = f"url:(http\://{sstr} OR https\\://{sstr})"
+                # sanitize here to avoid search string (and above) from needing quoted /'s!
+                selector_clauses.append(cls._sanitize_query(usf))
+        logger.debug("MC._selector_query_clauses OUT: %s", selector_clauses)
+        return selector_clauses
 
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
         logger.debug("MC.count %s %s %s %r", query, start_date, end_date, kwargs)
