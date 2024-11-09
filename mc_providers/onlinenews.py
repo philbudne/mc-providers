@@ -679,9 +679,12 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         sq = self._sanitize_query(user_query)
         logger.debug("_basic_query %s sanitize %s", user_query, sq)
 
-        # adds in canonical_domain/url query terms
-        # XXX TODO: move to a .filter!
-        q = self._assembled_query_str(sq, **kwargs)
+        selector_filter = False       # for evaluating claims about filter context!
+        if selector_filter:
+            q = sq
+        else:
+            # adds in canonical_domain/url query terms
+            q = self._assembled_query_str(sq, **kwargs)
 
         # works for date or datetime!
         start = start_date.strftime("%Y-%m-%d")
@@ -691,6 +694,27 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             .query(QueryString(query=q, default_field="text_content", default_operator="and"))\
             .filter("range", publication_date={'gte': start, "lte": end})
 
+        if selector_filter:
+            # try evaluating selectors (domains/url_search_strings) in "filter context".
+            # https://www.elastic.co/guide/en/elasticsearch/reference/current/query-filter-context.html#filter-context
+            # says:
+            #  Filtering has several benefits:
+            #  1. Simple binary logic: In a filter context, a query clause determines
+            #     document matches based on a yes/no criterion, without score calculation.
+            #  2. Performance: Because they don't compute relevance scores, filters
+            #     execute faster than queries.
+            #  3. Caching: Elasticsearch automatically caches frequently used filters,
+            #     speeding up subsequent search performance.
+            #  4. Resource efficiency: Filters consume less CPU resources compared to
+            #     full-text queries.
+            #  5. Query combination: Filters can be combined with scored queries to refine
+            #     result sets efficiently.
+            #
+            # Initial testing seems like it DOES help repeated queries.
+            # A further step might be implementing the selectors directly in DSL
+            # instead of as a query_string.
+            s = s.filter(QueryString(query=self._selector_query_string(kwargs), # takes dict
+                                     default_field="text_content", default_operator="and"))
         if source:
             return s.source(self._fields(expanded))
         else:
