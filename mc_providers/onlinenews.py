@@ -303,14 +303,25 @@ class OnlineNewsAbstractProvider(ContentProvider):
                 else:
                     selector_clauses.append(f)
 
-        # PB: experimental to get web-search out of query formatting biz
-        # (to be able to put selectors in a filter context)
+        # PB: experimental, to try to get web-search out of query
+        # formatting biz
         url_search_strings: list[tuple[str,str]] = kwargs.get('url_search_strings', [])
         if url_search_strings:
+            # NOTE! depends on search string:
+            # 1. starting with fully qualified domain name WITHOUT http:// or https://
+            # 2. ending with "*"
+
+            # It's at least POSSIBLE that making "url" a "wildcard"
+            # field could make leading wildcards a possibility, which
+            # would be wonderful, 'cause it's painful trying to
+            # explain how to come up with a proper search string!!!
             for cdom, sstr in url_search_strings:
-                usf = rf"(canonical_domain:{cdom} AND url:(http\://{sstr} OR https\://{sstr}))"
-                # NOTE: unclear if canonical_domain check of any benefit.  simplified:
-                #usf = rf"url:(http\://{sstr} OR https\://{sstr})"
+                # NOTE: unclear if canonical_domain check of any benefit!
+                if True:
+                    usf = f"(canonical_domain:{cdom} AND url:(http\\://{sstr} OR https\\://{sstr}))"
+                else:
+                    usf = f"url:(http\://{sstr} OR https\\://{sstr})"
+                # sanitize here to avoid search string (and above) from needing quoted /'s!
                 selector_clauses.append(cls._sanitize_query(usf))
 
         if len(selector_clauses) > 0:
