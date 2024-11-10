@@ -1,8 +1,10 @@
+# XXX maybe make _assemble.... take dict, and _prune (pop) args there???
+
 import datetime as dt
 import logging
 import random
 from collections import Counter
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 # PyPI
 import ciso8601
@@ -48,7 +50,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
                **kwargs) -> List[Dict]:
         results = []
-        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
             this_results = self._client.sample(subquery, start_date, end_date, **kwargs)
             results.extend(this_results)
         
@@ -60,14 +62,14 @@ class OnlineNewsAbstractProvider(ContentProvider):
     # Chunk'd
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
         count = 0
-        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
             count += self._client.count(subquery, start_date, end_date, **kwargs)
         return count
 
     # Chunk'd
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
         counter: Counter = Counter()
-        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
             results = self._client.count_over_time(subquery, start_date, end_date, **kwargs)
             countable = {i['date']: i['count'] for i in results}
             counter += Counter(countable)
@@ -87,7 +89,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     
     # Chunk'd
     def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs):
-        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+        for subquery in self._assemble_and_chunk_query_str(query, kwargs):
             for page in self._client.all_articles(subquery, start_date, end_date, **kwargs):
                 yield self._matches_to_rows(page)
 
@@ -99,14 +101,14 @@ class OnlineNewsAbstractProvider(ContentProvider):
         the right page of results.
         """
         updated_kwargs = {**kwargs, 'chunk': False}
-        query = self._assemble_and_chunk_query_str(query, **updated_kwargs)[0]
+        query = self._assemble_and_chunk_query_str_kw(query, updated_kwargs)[0]
         page, pagination_token = self._client.paged_articles(query, start_date, end_date, **kwargs)
         return self._matches_to_rows(page), pagination_token
 
     def _word_counts(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Mapping:
         logger.debug("AP._word_counts %s %s %s %r", query, start_date, end_date, kwargs)
 
-        chunked_queries = self._assemble_and_chunk_query_str(query, **kwargs)
+        chunked_queries = self._assemble_and_chunk_query_str_kw(query, kwargs)
 
         # An accumulator for the subqueries
         totals: Counter = Counter()
@@ -178,7 +180,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         matching_count = self.count(query, start_date, end_date, **kwargs)
 
         results_counter: Counter = Counter({})
-        for subquery in self._assemble_and_chunk_query_str(query, **kwargs) :   
+        for subquery in subqself._assemble_and_chunk_query_str_kw(query, kwargs):
             this_languages = self._client.top_languages(subquery, start_date, end_date, **kwargs)
             countable = {item["name"]: item["value"] for item in this_languages}
             results_counter += Counter(countable)
@@ -202,7 +204,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         # all_results = []
         
         results_counter: Counter = Counter({})
-        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
             results = self._client.top_sources(subquery, start_date, end_date)
             countable = {source['name']: source['value'] for source in results}
             results_counter += Counter(countable)
@@ -274,18 +276,40 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return queries
 
     @staticmethod
+    def _prune_kwargs(kwargs: dict[str, Any]) -> None:
+        """
+        takes a query **kwargs dict and removes keys that
+        are processed in this library, and should not be passed to clients.
+        """
+        # remove Chunked?
+        kwargs.pop("domains", None) # can be a set
+        kwargs.pop("filters", None) # can be a set
+        kwargs.pop("url_search_strings", None) # can be a dict[str, set]
+        kwargs.pop("url_search_string_domain", None) # TEMP
+
+    @classmethod
+    def _assemble_and_chunk_query_str_kw(cls, base_query: str, chunk: bool = True, kwargs: dict = {}):
+        """
+        takes kwargs as dict, removes items that shouldn't be sent to _client
+        """
+        queries = cls._assemble_and_chunk_query_str(base_query, chunk=chunk, **kwargs)
+        cls._prune_kwargs(kwargs)
+        return queries
+
+    @staticmethod
     def _sanitize_query(fstr: str) -> str:
         """
-        noop: (/ quoting done in mediacloud.py sanitize_query)
+        noop: (/ quoting done in mediacloud.py sanitize_query),
+        presumably waybacknews also does??
         """
         return fstr
 
     @classmethod
     def _selector_query_clauses(cls, kwargs: dict) -> str:
         """
-        take domains, filters, url_search_strings as kwargs
+        take domains, filters, url_search_strings as kwargs and
         return a list of query_strings to be OR'ed together
-        (to be AND'ed with user query or used as a filter)
+        (to be AND'ed with user query OR used as a filter)
         """
         logger.debug("AP._selector_query_clauses IN: %r", kwargs)
         selector_clauses = []
@@ -295,8 +319,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
             domain_strings = " OR ".join(domains)
             selector_clauses.append(f"{cls.domain_search_string()}:({domain_strings})")
             
-        # put all filters in single query string
-        # they're additive, so "selectors" might have been clearer?
+        # put all filters in single query string (NOTE: additive)
         filters = kwargs.get('filters', [])
         if len(filters) > 0:
             for filter in filters:
@@ -444,28 +467,91 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         selector_clauses = super()._selector_query_clauses(kwargs)
 
         # PB: experimental, to try to get web-search out of query
-        # formatting biz.  XXX TODO: suppress this for Internet Archive!!!
-        # Either a boolean class member/method or a simpler version
-        # here in the base class!!!
-        url_search_strings: list[tuple[str,str]] = kwargs.get('url_search_strings', [])
+        # formatting biz.  Accepts either a list of (domain_string,
+        # search_string) or a dict indexed by domain_string of lists
+        # of search_strings.
+        url_search_strings: Iterable[tuple[str,str]] | Mapping[str, Iterable[str]] = kwargs.get('url_search_strings', [])
         if url_search_strings:
             # NOTE! depends on search string:
             # 1. starting with fully qualified domain name WITHOUT http:// or https://
             # 2. ending with "*"
 
-            # It's at least POSSIBLE that making "url" a "wildcard"
+            # It's at least POSSIBLE that making "url" an ES "wildcard"
             # field could make leading wildcards a possibility, which
             # would be wonderful, 'cause it's painful trying to
             # explain how to come up with a proper search string!!!
-            domain_field = cls.domain_search_string()
-            for cdom, sstr in url_search_strings:
-                if True:
-                    # NOTE: unclear if domain_field check of any benefit!!!
-                    usf = f"({domain_field}:{cdom} AND url:(http\\://{sstr} OR https\\://{sstr}))"
-                else:
-                    usf = f"url:(http\://{sstr} OR https\\://{sstr})"
-                # sanitize here to avoid search string (and above) from needing quoted /'s!
-                selector_clauses.append(cls._sanitize_query(usf))
+
+            def format_uss(uss: str, url_list: list[str] | None = None) -> list[str]:
+                """
+                The ONE place that knows how to format a url_search_string!!!
+                (ie; what to put before and after one)
+
+                NOTE! returns "unsanitized" (unsanitary?) strings!!
+                (must have /'s quoted!!!)
+                """
+                if url_list is None:
+                    url_list = []
+
+                # currently url_search_strings start with fully qualified domain name (FQDN)
+                # without scheme or leading slashes, and MUST end with a *!
+                if not uss.endswith("*"):
+                    uss += "*"
+                url_list.append(f"http\\://{sstr}")
+                url_list.append(f"https\\://{sstr}")
+                return url_list
+
+            def match_formatted_search_strings(fuss: list[str]) -> str:
+                """
+                takes list of url search_string formatted by `format_uss`
+                returns query_string fragment
+                """
+                assert fuss
+                urls_str = " OR ".join(fuss)
+                return f"url:({urls_str})"
+
+            # Unclear if domain field check actually helps at all,
+            # so make it optional for testing.
+            if kwargs.get("url_search_string_domain", True):
+                domain_field = cls.domain_search_string()
+
+                def add_domain_selector(domain: str, fuss: list[str]) -> None:
+                    """
+                    takes domain and list or urls formatted by format_uss
+                    """
+                    mfuss = match_formatted_search_strings(fuss)
+                    selector_clauses.append(
+                        cls._sanitize_query(
+                            f"({domain_field}:{cdom} AND {mfuss})"))
+
+                if isinstance(url_search_strings, list): # accept any non-mapping iterable?
+                    # initial version took list of tuples, flush???
+                    for cdom, sstr in url_search_strings:
+                        add_domain_selector(cdom, format_uss(sstr))
+                else:           # assume mapping
+                    # here with mapping of cdom => [search_strings]
+                    for cdom, search_strings in url_search_strings.items():
+                        fuss = [] # formatted url_search_strings
+                        for sstr in search_strings:
+                            fuss = format_uss(sstr, fuss)
+                        add_domain_selector(cdom, fuss)
+            else:               # here with mapping
+                # here to make query without domain field check
+                # check all the urls in one swell foop!
+                fuss = []
+                if isinstance(url_search_strings, list): # accept any non-mapping iterable?
+                    # initial version took list of tuples, flush???
+                    for cdom, sstr in url_search_strings:
+                        fuss = format_uss(sstr, fuss)
+                else: # mapping
+                    for cdom, search_strings in url_search_strings.items():
+                        for sstr in search_strings:
+                            fuss = format_uss(sstr, fuss)
+                            
+                selector_clauses.append(
+                    cls._sanitize_query(
+                        match_formatted_search_strings(fuss)))
+
+        # maybe sanitize ALL clauses here?
         logger.debug("MC._selector_query_clauses OUT: %s", selector_clauses)
         return selector_clauses
 
@@ -547,7 +633,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
         # no chunking on MC
         q = self._assembled_query_str(query, **kwargs)
-
+        self._prune_kwargs(kwargs)
         return self._client._overview_query(q, start_date, end_date, **kwargs)
 
     @classmethod
@@ -575,7 +661,7 @@ from elasticsearch_dsl.utils import AttrDict
 def _get(ad: AttrDict, key: str, default: Any = None) -> Any:
     """
     AttrDict doesn't have a "get" method; hide that here to make it
-    easy to switch back to _exec returning res.to_dict() if needed...
+    easy to switch back to _search returning res.to_dict() if needed...
     """
     return getattr(ad, key, default)
 
@@ -632,7 +718,7 @@ def _b64_decode_page_token(strng: str) -> str:
 
 def _get_hits(res: AttrDict) -> list[AttrDict]:
     """
-    retrieve hits array from _exec results
+    retrieve hits array from _search results
     """
     h1 = _get(res, "hits")
     if not h1:
@@ -647,9 +733,26 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     direct to Elastic (skipping both the news-search-api server
     and mediacloud.py, the client library that talks to n-s-a)
     """
-    LOG_FULL_RESULTS = False    # log full _exec results @ debug
+    LOG_FULL_RESULTS = False    # log full _search results @ debug
+
+    def __init__(self, *args, **kwargs):
+        user = os.environ.get("USER") or str(os.getuid())
+        self.__init__(*args, **kwargs)
+
+        # XXX include version? 
+        self._opaque_id = f"{providers {socket.gethostname()}:{user}:{os.getpid()}"
+
+        # Will always (re)start at first server?  No state keeping
+        # is possible with web-search (creates a new Provider instance
+        # for each query).  Maybe shuffle the list??
+        eshosts = (self._base_url or "").split(",") # comma separated list of http://SERVER:PORT
+        if not eshosts:
+            raise ValueError("no ES url(s)")
+        self._es = elasticsearch.Elasticsearch(eshosts, request_timeout=self._timeout, max_retries=3)
+
 
     def get_client(self):
+        # no client class here!
         # called from OnlineNewsAbstractProvider, to set _client, so
         # can't raise exceptions, but want _client to be None, to
         # catch any attempts to use it!
@@ -679,7 +782,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         sq = self._sanitize_query(user_query)
         logger.debug("_basic_query %s sanitize %s", user_query, sq)
 
-        selector_filter = False       # for evaluating claims about filter context!
+        selector_filter = True       # for evaluating claims about filter context!
         if selector_filter:
             q = sq
         else:
@@ -690,7 +793,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         start = start_date.strftime("%Y-%m-%d")
         end = end_date.strftime("%Y-%m-%d")
 
-        s = Search(index=self._index_from_dates(start_date, end_date))\
+        s = Search(index=self._index_from_dates(start_date, end_date), using=self._es)\
             .query(QueryString(query=q, default_field="text_content", default_operator="and"))\
             .filter("range", publication_date={'gte': start, "lte": end})
 
@@ -734,19 +837,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
         return [self.DEFAULT_COLLECTION]
 
-    def _exec(self, search: Search) -> AttrDict:
+    def _search(self, search: Search) -> AttrDict:
         """
         one place to send queries to ES, for logging
         """
-        logger.debug("MC._exec %r", search.to_dict())
-
-        # Will always (re)start at first server?  No state keeping
-        # is possible with web-search (creates a new Provider instance
-        # for each query).  Maybe shuffle the list??
-        eshosts = (self._base_url or "").split(",") # comma separated list of http://SERVER:PORT
-        if not eshosts:
-            raise ValueError("no ES url(s)")
-        es = elasticsearch.Elasticsearch(eshosts, request_timeout=self._timeout, max_retries=3)
+        logger.debug("MC._search %r", search.to_dict())
 
         t0 = time.monotonic()
         if self._caching < 0:
@@ -759,11 +854,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # overrides the index-level setting"
             search = search.params(request_cache=False)
 
-        res = search.using(es).execute()
+        res = search.execute()
         elapsed = time.monotonic() - t0
-        logger.debug("MC._exec ES time %s ms (%.3f elapsed)", _get(res, "took", -1), elapsed*1000)
+        logger.debug("MC._search ES time %s ms (%.3f elapsed)", _get(res, "took", -1), elapsed*1000)
         if self.LOG_FULL_RESULTS:
-            logger.debug("MC._exec returning %r", res.to_dict()) # can be VERY big for paged_articles!!!
+            logger.debug("MC._search returning %r", res.to_dict()) # can be VERY big for paged_articles!!!
         return res
 
     @CachingManager.cache('overview')
@@ -785,7 +880,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         search.aggs.bucket(AGG_LANG, "terms", field="language.keyword", size=100)
         search.aggs.bucket(AGG_DOMAIN, "terms", field="canonical_domain", size=100)
         search = search.extra(track_total_hits=True)
-        res = self._exec(search)
+        res = self._search(search)
         hits = _get_hits(res)
         if not hits:
             return {}           # checked by _is_no_results
@@ -827,7 +922,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                            "sampler",
                            shard_size=shard_size).aggs[agg_name] = agg_terms
 
-        res = self._exec(search)
+        res = self._search(search)
         if (not _get_hits(res) or
             not (buckets := res["aggregations"][sampler_name][agg_name]["buckets"])):
             return {}
@@ -847,10 +942,10 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
     @CachingManager.cache()
     def item(self, item_id: str) -> Dict:
-        s = Search(index=self.DEFAULT_COLLECTION)\
+        s = Search(index=self.DEFAULT_COLLECTION, using=self._es)\
             .query(Match(_id=item_id))\
             .source(includes=self._fields(expanded=True)) # always includes full_text!!
-        res = self._exec(s)
+        res = self._search(s)
         hits = _get_hits(res)
         if len(hits) == 0:
             return {}
@@ -887,10 +982,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             raise ValueError(page_sort_order)
 
         if kwargs:
-            extra_keys = set(kwargs) - {'domains', 'filters'}
-            if extra_keys:
-                exstring = ", ".join(extra_keys)
-                raise TypeError(f"unknown keyword args: {exstring}")
+            exstring = ", ".join(kwargs) # join key names
+            raise TypeError(f"unknown keyword args: {exstring}")
 
         page_sort_format = None
         if page_sort_field == "publication_date":
@@ -930,13 +1023,13 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # results.
             search = search.extra(search_after=[_decode_page_token(pagination_token)])
 
-        res = self._exec(search)
+        res = self._search(search)
         hits = _get_hits(res)
         if not hits:
             return ([], "")
 
         if len(hits) == page_size:
-            # token is made from first/only sort key value for last item
+            # paging token is made from first/only sort key value [0] for last item [-1] returned
             new_pt = _encode_page_token(hits[-1]["sort"][0])
         else:
             new_pt = ""
