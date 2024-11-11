@@ -982,6 +982,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         if page_sort_order not in ["asc", "desc"]:
             raise ValueError(page_sort_order)
 
+        self._prune_kwargs(kwargs)
         if kwargs:
             exstring = ", ".join(kwargs) # join key names
             raise TypeError(f"unknown keyword args: {exstring}")
