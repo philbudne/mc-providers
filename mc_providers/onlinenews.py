@@ -201,17 +201,13 @@ class OnlineNewsAbstractProvider(ContentProvider):
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                 **kwargs) -> List[Dict]:
         
-        # all_results = []
-        
         results_counter: Counter = Counter({})
         for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
             results = self._client.top_sources(subquery, start_date, end_date)
             countable = {source['name']: source['value'] for source in results}
             results_counter += Counter(countable)
-            # all_results.extend(results)
         
-        all_results = dict(results_counter)
-        cleaned_sources = [{"source": source , "count": count} for source, count in all_results.items()]
+        cleaned_sources = [{"source": source , "count": count} for source, count in results_counter.items()]
         cleaned_sources = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
         return cleaned_sources
 
@@ -648,6 +644,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 # code dragged up from mediacloud.py and news-search-api.py
 #
 import base64
+import os
+import socket
 import time
 
 import elasticsearch
@@ -736,19 +734,22 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     LOG_FULL_RESULTS = False    # log full _search results @ debug
 
     def __init__(self, *args, **kwargs):
-        user = os.environ.get("USER") or str(os.getuid())
-        self.__init__(*args, **kwargs)
-
-        # XXX include version? 
-        self._opaque_id = f"{providers {socket.gethostname()}:{user}:{os.getpid()}"
+        super().__init__(*args, **kwargs)
 
         # Will always (re)start at first server?  No state keeping
         # is possible with web-search (creates a new Provider instance
-        # for each query).  Maybe shuffle the list??
+        # for each query).  Maybe shuffle the list if library doesn't?
         eshosts = (self._base_url or "").split(",") # comma separated list of http://SERVER:PORT
-        if not eshosts:
-            raise ValueError("no ES url(s)")
-        self._es = elasticsearch.Elasticsearch(eshosts, request_timeout=self._timeout, max_retries=3)
+
+        # hopefully will help tie tasks seen in es.tasks() API to user/query!
+        user = os.environ.get("USER") or str(os.getuid())
+        # XXX include library version? class name??
+        opaque_id = f"providers {socket.gethostname()}:{user}:{os.getpid()}"
+
+        self._es = elasticsearch.Elasticsearch(eshosts,
+                                               max_retries=3,
+                                               opaque_id=opaque_id,
+                                               request_timeout=self._timeout)
 
 
     def get_client(self):
