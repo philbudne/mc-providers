@@ -108,6 +108,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     def _word_counts(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Mapping:
         logger.debug("AP._word_counts %s %s %s %r", query, start_date, end_date, kwargs)
 
+        kwargs.pop("exclude", None)
         chunked_queries = self._assemble_and_chunk_query_str_kw(query, kwargs)
 
         # An accumulator for the subqueries
@@ -160,8 +161,8 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
         # for now just return top terms in article titles
         sample_size = 5000      # PB: only used for scaling???
-        
-        results_counter = self._word_counts(query, start_date, end_date, **kwargs)
+        results_counter = self._word_counts(query, start_date, end_date,
+                                            exclude=list(stopwords), **kwargs)
         if self.DEBUG_WORDS > 1:
             logger.debug("AP.words total %r", results_counter)
             for t, c in results_counter.items():
@@ -401,6 +402,41 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
         return "OnlineNewsWaybackMachineProvider"
 
 
+################
+# helpers for formatting url_search_strings (only enabled for MC)
+# the helpers are only needed because of the TEMP url_search_string_domain
+
+def format_and_append_uss(uss: str, url_list: list[str]) -> None:
+    """
+    The ONE place that knows how to format a url_search_string!!!
+    (ie; what to put before and after one).
+
+    Appends to `url_list` argument!
+
+    NOTE! generates "unsanitized" (unsanitary?) strings!!
+
+    Currently (11/2024) A URL Search String should:
+    1. Start with fully qualified domain name WITHOUT http:// or https://
+    2. End with "*"
+    """
+    # currently url_search_strings start with fully
+    # qualified domain name (FQDN) without scheme or
+    # leading slashes, and MUST end with a *!
+    if not uss.endswith("*"):
+        sstr += "*"
+    url_list.append(f"http\\://{uss}")
+    url_list.append(f"https\\://{uss}")
+
+def match_formatted_search_strings(fuss: list[str]) -> str:
+    """
+    takes list of url search_string formatted by `format_and_append_uss`
+    returns query_string fragment
+    """
+    assert fuss
+    urls_str = " OR ".join(fuss)
+    return f"url:({urls_str})"
+
+
 class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     """
     Provider interface to access new mediacloud-news-search archive. 
@@ -463,91 +499,39 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         selector_clauses = super()._selector_query_clauses(kwargs)
 
         # PB: experimental, to try to get web-search out of query
-        # formatting biz.  Accepts either a list of (domain_string,
-        # search_string) or a dict indexed by domain_string of lists
-        # of search_strings.
-        url_search_strings: Iterable[tuple[str,str]] | Mapping[str, Iterable[str]] = kwargs.get('url_search_strings', [])
+        # formatting biz.  Accepts a dict/defaultdict indexed by
+        # domain_string, of lists (or sets!) of search_strings.
+        url_search_strings: Mapping[str, Iterable[str]] = kwargs.get('url_search_strings', [])
         if url_search_strings:
-            # NOTE! depends on search string:
-            # 1. starting with fully qualified domain name WITHOUT http:// or https://
-            # 2. ending with "*"
-
-            # It's at least POSSIBLE that making "url" an ES "wildcard"
-            # field could make leading wildcards a possibility, which
-            # would be wonderful, 'cause it's painful trying to
-            # explain how to come up with a proper search string!!!
-
-            def format_uss(uss: str, url_list: list[str] | None = None) -> list[str]:
-                """
-                The ONE place that knows how to format a url_search_string!!!
-                (ie; what to put before and after one)
-
-                NOTE! returns "unsanitized" (unsanitary?) strings!!
-                (must have /'s quoted!!!)
-                """
-                if url_list is None:
-                    url_list = []
-
-                # currently url_search_strings start with fully qualified domain name (FQDN)
-                # without scheme or leading slashes, and MUST end with a *!
-                if not uss.endswith("*"):
-                    uss += "*"
-                url_list.append(f"http\\://{sstr}")
-                url_list.append(f"https\\://{sstr}")
-                return url_list
-
-            def match_formatted_search_strings(fuss: list[str]) -> str:
-                """
-                takes list of url search_string formatted by `format_uss`
-                returns query_string fragment
-                """
-                assert fuss
-                urls_str = " OR ".join(fuss)
-                return f"url:({urls_str})"
-
             # Unclear if domain field check actually helps at all,
             # so make it optional for testing.
-            if kwargs.get("url_search_string_domain", True):
+            if kwargs.get("url_search_string_domain", True): # TEMP: include canonincal_domain:
                 domain_field = cls.domain_search_string()
 
-                def add_domain_selector(domain: str, fuss: list[str]) -> None:
-                    """
-                    takes domain and list or urls formatted by format_uss
-                    """
+                # here with mapping of cdom => iterable[search_string]
+                for cdom, search_strings in url_search_strings.items():
+                    fuss = [] # formatted url_search_strings
+                    for sstr in search_strings:
+                        format_and_append_uss(sstr, fuss)
+
                     mfuss = match_formatted_search_strings(fuss)
                     selector_clauses.append(
                         cls._sanitize_query(
                             f"({domain_field}:{cdom} AND {mfuss})"))
 
-                if isinstance(url_search_strings, list): # accept any non-mapping iterable?
-                    # initial version took list of tuples, flush???
-                    for cdom, sstr in url_search_strings:
-                        add_domain_selector(cdom, format_uss(sstr))
-                else:           # assume mapping
-                    # here with mapping of cdom => [search_strings]
-                    for cdom, search_strings in url_search_strings.items():
-                        fuss = [] # formatted url_search_strings
-                        for sstr in search_strings:
-                            fuss = format_uss(sstr, fuss)
-                        add_domain_selector(cdom, fuss)
-            else:               # here with mapping
-                # here to make query without domain field check
-                # check all the urls in one swell foop!
+                    add_domain_selector(cdom, fuss)
+            else: # make query without domain (name) field check
+                # collect all the URL search strings
                 fuss = []
-                if isinstance(url_search_strings, list): # accept any non-mapping iterable?
-                    # initial version took list of tuples, flush???
-                    for cdom, sstr in url_search_strings:
-                        fuss = format_uss(sstr, fuss)
-                else: # mapping
-                    for cdom, search_strings in url_search_strings.items():
-                        for sstr in search_strings:
-                            fuss = format_uss(sstr, fuss)
-                            
+                for cdom, search_strings in url_search_strings.items():
+                    for sstr in search_strings:
+                        format_and_append_uss(sstr, fuss)
+
+                # check all the urls in one swell foop!
                 selector_clauses.append(
                     cls._sanitize_query(
                         match_formatted_search_strings(fuss)))
 
-        # maybe sanitize ALL clauses here?
         logger.debug("MC._selector_query_clauses OUT: %s", selector_clauses)
         return selector_clauses
 
@@ -653,7 +637,7 @@ import mcmetadata.urls as urls
 from elasticsearch_dsl import Search
 from elasticsearch_dsl.aggs import RareTerms, Sampler, SignificantTerms, Terms
 from elasticsearch_dsl.query import Match, QueryString
-#from elasticsearch_dsl.types import FieldSort, SortOptions # not in 8.15 (yet?)
+#from elasticsearch_dsl.types import FieldSort, SortOptions # not in 8.15
 from elasticsearch_dsl.utils import AttrDict
 
 def _get(ad: AttrDict, key: str, default: Any = None) -> Any:
@@ -685,8 +669,8 @@ def _format_day_counts(bucket: list) -> dict[str, int]:
     from news-search-api/api.py;
     used to format "dailycounts"
 
-    takes [{"key": key, "doc_count": doc_count}, ....]
-    and returns {key: count, ....}
+    takes [{"key_as_string": "YYYY-MM-DDT00:00:00.000Z", "doc_count": count}, ....]
+    and returns {"YYYY-MM-DD": count, ....}
     """
     return {item["key_as_string"][:10]: item["doc_count"] for item in bucket}
 
@@ -783,43 +767,21 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         sq = self._sanitize_query(user_query)
         logger.debug("_basic_query %s sanitize %s", user_query, sq)
 
-        selector_filter = True       # for evaluating claims about filter context!
-        if selector_filter:
-            q = sq
-        else:
-            # adds in canonical_domain/url query terms
-            q = self._assembled_query_str(sq, **kwargs)
-
         # works for date or datetime!
-        start = start_date.strftime("%Y-%m-%d")
-        end = end_date.strftime("%Y-%m-%d")
+        start = start_date.strftime("%Y-%m-%dT00:00:00Z") # paranoia
+        end = end_date.strftime("%Y-%m-%d") # T23:59:59:999_999_999Z implied?
 
         s = Search(index=self._index_from_dates(start_date, end_date), using=self._es)\
-            .query(QueryString(query=q, default_field="text_content", default_operator="and"))\
+            .query(QueryString(query=sq, default_field="text_content", default_operator="and"))\
             .filter("range", publication_date={'gte': start, "lte": end})
 
-        if selector_filter:
-            # try evaluating selectors (domains/url_search_strings) in "filter context".
-            # https://www.elastic.co/guide/en/elasticsearch/reference/current/query-filter-context.html#filter-context
-            # says:
-            #  Filtering has several benefits:
-            #  1. Simple binary logic: In a filter context, a query clause determines
-            #     document matches based on a yes/no criterion, without score calculation.
-            #  2. Performance: Because they don't compute relevance scores, filters
-            #     execute faster than queries.
-            #  3. Caching: Elasticsearch automatically caches frequently used filters,
-            #     speeding up subsequent search performance.
-            #  4. Resource efficiency: Filters consume less CPU resources compared to
-            #     full-text queries.
-            #  5. Query combination: Filters can be combined with scored queries to refine
-            #     result sets efficiently.
-            #
-            # Initial testing seems like it DOES help repeated queries.
-            # A further step might be implementing the selectors directly in DSL
-            # instead of as a query_string.
-            s = s.filter(QueryString(query=self._selector_query_string(kwargs), # takes dict
-                                     default_field="text_content", default_operator="and"))
-        if source:
+        # evaluating selectors (domains/url_search_strings) in "filter context".
+        # https://www.elastic.co/guide/en/elasticsearch/reference/current/query-filter-context.html#filter-context
+        sqs = self._selector_query_string(kwargs)
+        if sqs:
+            s = s.filter(QueryString(query=sqs))
+
+        if source:              # return source?
             return s.source(self._fields(expanded))
         else:
             return s.source(False)
@@ -859,7 +821,23 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         elapsed = time.monotonic() - t0
         logger.debug("MC._search ES time %s ms (%.3f elapsed)", _get(res, "took", -1), elapsed*1000)
         if self.LOG_FULL_RESULTS:
-            logger.debug("MC._search returning %r", res.to_dict()) # can be VERY big for paged_articles!!!
+            import json         # TEMP?
+            logger.debug("MC._search returning %s", json.dumps(res.to_dict())) # can be VERY big for paged_articles!!!
+
+        try:
+            shards = res._shards
+            if shards:
+                failed = shards.failed
+                if failed:
+                    logger.info("MC._search _shards.failed: %d", failed)
+                    reasons = Counter()
+                    for shard in shards.failures:
+                        rt = shard.reason.type
+                        if rt:
+                            reasons[rt] += 1
+                    logger.info("MC._search failure reasons: %r", dict(reasons))
+        except (ValueError, KeyError):
+            pass
         return res
 
     @CachingManager.cache('overview')
@@ -871,9 +849,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         logger.debug("MC._overview %s %s %s %r", q, start_date, end_date, kwargs)
 
-        AGG_DAILY = "daily"
-        AGG_LANG = "lang"
-        AGG_DOMAIN = "domain"
+        # these are arbitrary, but match news-search-api/client.py
+        # so that top-queries.py can recognize this is an overview query:
+        AGG_DAILY = "dailycounts"
+        AGG_LANG = "toplangs"
+        AGG_DOMAIN = "topdomains"
 
         search = self._basic_search(q, start_date, end_date, **kwargs)
         search.aggs.bucket(AGG_DAILY, "date_histogram", field="publication_date",
@@ -897,7 +877,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         }
 
     def _terms(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
-               field: str, aggr: str, **kwargs) -> Dict:
+               field: str, aggr: str, exclude: list[str] = [], **kwargs) -> Dict:
         """
         only called internally, so no field/aggr checks
         """
@@ -906,12 +886,15 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         search = self._basic_search(query, start_date, end_date, source=False, **kwargs)
         if aggr == "top":
-            agg_terms = Terms(field=field, size=200,
-                              min_doc_count=10, shard_min_doc_count=5)
+            agg_terms = Terms(field=field, size=200, # PB: lower, since have "exclude"?
+                              min_doc_count=10, # default is 1
+                              shard_min_doc_count=5, # must appear in this many shards
+                              exclude=exclude) # stop words!
             shard_size = 500
         elif aggr == "significant":
             agg_terms = SignificantTerms(field=field, size=200,
-                                         min_doc_count=10, shard_min_doc_count=5)
+                                         min_doc_count=10, shard_min_doc_count=5,
+                                         exclude=exclude) # stop words!
             shard_size = 500
         elif aggr == "rare":
             agg_terms = RareTerms(field=field, exclude="[0-9].*")
@@ -932,14 +915,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
     def _word_counts(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Mapping:
         """
-        called by OnlineNewsAbstractProvider.words
+        called by OnlineNewsAbstractProvider.words.
+        NOTE! "exclude" in kwargs, with list of stop words!
         """
-        field = "article_title"
-        agg = "top"             # also: significant & rare
-
-        logger.debug("MC._words %s %s %s", query, start_date, end_date)
-        # XXX doing direct ES queries, is it possible to put stop words filter into query??
-        return self._terms(query, start_date, end_date, field, agg, **kwargs)
+        logger.debug("MC._words %s %s %s %r", query, start_date, end_date, kwargs)
+        return self._terms(query, start_date, end_date, field="article_title", aggr="top", **kwargs)
 
     @CachingManager.cache()
     def item(self, item_id: str) -> Dict:
