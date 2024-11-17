@@ -2,6 +2,7 @@
 
 import datetime as dt
 import logging
+import os
 import random
 from collections import Counter
 from typing import Any, Dict, Iterable, List, Mapping, Optional
@@ -443,7 +444,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
     
-    DEFAULT_COLLECTION = "mc_search-*"
+    DEFAULT_COLLECTION = os.environ.get(
+        "ELASTICSEARCH_INDEX_NAME_PREFIX", "mc_search") + "-*"
 
     def __init__(self, base_url=Optional[str], timeout: Optional[int] = None, caching: bool = True):
         super().__init__(base_url, timeout, caching)
