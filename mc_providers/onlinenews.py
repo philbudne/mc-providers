@@ -687,12 +687,10 @@ def _format_counts(bucket: list) -> dict[str, int]:
     """
     return {item["key"]: item["doc_count"] for item in bucket}
 
-# was published_date, but it's awful for pagination
+# was publication_date, but it's awful for pagination
 # (can only return a single page per day!)
 _DEF_PAGE_SORT_FIELD = "indexed_date"
 _DEF_PAGE_SORT_ORDER = "desc"
-
-PageTokenType = str       # ints returned as str
 
 def _b64_encode_page_token(strng: str) -> str:
     return base64.b64encode(strng.encode(), b"-_").decode().replace("=", "~")
@@ -797,7 +795,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     def _index_from_dates(self, start_date: dt.datetime | None, end_date: dt.datetime | None) -> list[str]:
         """
         return list of indices to search for a given date range.
-        if indexing goes being split by published_date (by year or quarter?)
+        if indexing goes being split by publication_date (by year or quarter?)
         this could limit the number of shards that need to be queried
         """
         return [self.DEFAULT_COLLECTION]
@@ -821,7 +819,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         res = search.execute()
         elapsed = time.monotonic() - t0
-        logger.debug("MC._search ES time %s ms (%.3f elapsed)", _get(res, "took", -1), elapsed*1000)
+        logger.info("MC._search ES time %s ms (%.3f elapsed)", _get(res, "took", -1), elapsed*1000)
         if self.LOG_FULL_RESULTS:
             import json         # TEMP?
             logger.debug("MC._search returning %s", json.dumps(res.to_dict())) # can be VERY big for paged_articles!!!
@@ -888,21 +886,53 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         search = self._basic_search(query, start_date, end_date, source=False, **kwargs)
         if aggr == "top":
-            agg_terms = Terms(field=field, size=200, # PB: lower, since have "exclude"?
+            # To get more accurate results, the terms agg fetches more
+            # than the top size terms from each shard. It fetches the
+            # top `shard_size` terms, which defaults to `size` * 1.5 + 10.
+
+            # Terms must appear in `min_doc_count` documents (default is 1).
+
+            # The parameter `shard_min_doc_count` regulates the
+            # certainty a shard has if the term should actually be
+            # added to the candidate list or not with respect to the
+            # min_doc_count. Terms will only be considered if their
+            # local shard frequency within the set is higher than the
+            # shard_min_doc_count.
+
+            agg_terms = Terms(field=field, size=200,
                               min_doc_count=10, # default is 1
-                              shard_min_doc_count=5, # must appear in this many shards
+                              shard_min_doc_count=5, # default is 0
                               exclude=exclude) # stop words!
             shard_size = 500
         elif aggr == "significant":
+            # Returns interesting or unusual occurrences of terms in a
+            # set.  The terms selected are not simply the most popular
+            # terms in a set. They are the terms that have undergone a
+            # significant change in popularity measured between a
+            # foreground and background set.
+
             agg_terms = SignificantTerms(field=field, size=200,
                                          min_doc_count=10, shard_min_doc_count=5,
                                          exclude=exclude) # stop words!
             shard_size = 500
+
+            # See also "significant text" aggregation:
+            # Designed for use on `text` fields.
+            # Does not require field data.
+            # Re-analyzes text on the fly.
         elif aggr == "rare":
+            # "rare" terms are at the long-tail of the distribution
+            # and are not frequent. Conceptually, this is like a terms
+            # aggregation that is sorted by _count ascending.
+
             agg_terms = RareTerms(field=field, exclude="[0-9].*")
             shard_size = 10
         else:
             raise ValueError(aggr)
+
+        # The `shard_size` parameter limits how many top-scoring
+        # documents are collected in the sample processed on each
+        # shard. The default value is 100.
 
         search.aggs.bucket(sampler_name,
                            "sampler",
@@ -939,9 +969,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     def paged_items(
             self, query: str,
             start_date: dt.datetime, end_date: dt.datetime,
-            page_size: int = _ES_MAXPAGE,
+            page_size: int = 1000,
             **kwargs
-    ) -> tuple[list[dict], Optional[PageTokenType]]:
+    ) -> tuple[list[dict], Optional[str]]:
         """
         return a single page of data (with `page_size` items).
         Pass `None` as first `pagination_token`, after that pass
@@ -952,7 +982,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         logger.debug("MC._paged_articles q: %s: %s e: %s ps: %d kw: %r",
                      query, start_date, end_date, page_size, kwargs)
 
-        page_size = max(page_size, _ES_MAXPAGE)
+        page_size = min(page_size, _ES_MAXPAGE)
         expanded = kwargs.pop("expanded", False)
         page_sort_field = kwargs.pop("page_sort_field", _DEF_PAGE_SORT_FIELD)
         page_sort_order = kwargs.pop("page_sort_order", _DEF_PAGE_SORT_ORDER)
@@ -969,43 +999,21 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             exstring = ", ".join(kwargs) # join key names
             raise TypeError(f"unknown keyword args: {exstring}")
 
-        page_sort_format = None
-        if page_sort_field == "publication_date":
-            page_sort_format = "basic_date" # YYYYMMDD (no need for encoding)
-        elif page_sort_field == "indexed_date":
-            # "date" fields are _supposed_ to be stored as milliseconds,
-            # but supplied values have microseconds, and stored
-            # values seem to be returned with them?!
-            page_sort_format = "epoch_millis"
-
-        if page_sort_format:
-            # numeric string: no encoding needed
-            # (unless obfuscation is the goal)
-            _encode_page_token = _decode_page_token = lambda x: x
-        else:
-            _encode_page_token = _b64_encode_page_token
-            _decode_page_token = _b64_decode_page_token
-
-        if page_sort_format:
-            sort_opts = {
-                # XXX types.SortOptions (not in 8.15.4)
-                page_sort_field: {
-                    # XXX types.FieldSort (not in 8.15.4)
-                    "order": page_sort_order,
-                    "format": page_sort_format
-                }
-            }
-        else:
-            sort_opts = {page_sort_field: page_sort_order}
+        # XXX types.SortOptions (not in 8.15.4)
+        sort_opts = {page_sort_field: page_sort_order}
 
         search = self._basic_search(query, start_date, end_date, expanded=expanded, **kwargs)\
                      .extra(size=page_size, track_total_hits=True)\
                      .sort(sort_opts)
+
+        print(search.to_dict())
+
         if pagination_token:
             # important to use `search_after` instead of 'from' for
             # memory reasons related to paging through more than 10k
             # results.
-            search = search.extra(search_after=[_decode_page_token(pagination_token)])
+            after = [_b64_decode_page_token(pagination_token)] # list of keys
+            search = search.extra(search_after=after)
 
         res = self._search(search)
         hits = _get_hits(res)
@@ -1013,8 +1021,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             return ([], "")
 
         if len(hits) == page_size:
-            # paging token is made from first/only sort key value [0] for last item [-1] returned
-            new_pt = _encode_page_token(hits[-1]["sort"][0])
+            # get paging token from first sort key of last item returned.
+            # str() needed for dates, which are returned as integer milliseconds
+            new_pt = _b64_encode_page_token(str(hits[-1]["sort"][0]))
         else:
             new_pt = ""
 
@@ -1028,7 +1037,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
         returns generator of pages (lists) of items
         """
-        next_page_token: PageTokenType | None = None
+        next_page_token: str | None = None
         while True:
             page, next_page_token = self.paged_items(
                 query, start_date, end_date,
