@@ -1,6 +1,7 @@
 # XXX maybe make _assemble.... take dict, and _prune (pop) args there???
 
 import datetime as dt
+import json
 import logging
 import os
 import random
@@ -715,8 +716,6 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     direct to Elastic (skipping both the news-search-api server
     and mediacloud.py, the client library that talks to n-s-a)
     """
-    LOG_FULL_RESULTS = False    # log full _search results @ debug
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -800,7 +799,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
         return [self.DEFAULT_COLLECTION]
 
-    def _search(self, search: Search) -> AttrDict:
+    def _search(self, search: Search, profile: str | None = None) -> AttrDict:
         """
         one place to send queries to ES, for logging
         """
@@ -817,12 +816,19 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # overrides the index-level setting"
             search = search.params(request_cache=False)
 
+        if isinstance(profile, str):
+            search = search.extra(profile=True)
+
         res = search.execute()
         elapsed = time.monotonic() - t0
         logger.info("MC._search ES time %s ms (%.3f elapsed)", _get(res, "took", -1), elapsed*1000)
-        if self.LOG_FULL_RESULTS:
-            import json         # TEMP?
-            logger.debug("MC._search returning %s", json.dumps(res.to_dict())) # can be VERY big for paged_articles!!!
+
+        if profile and (pdata := _get(res, "profile")):
+            import json
+            fname = time.strftime(f"{profile}-%Y-%m-%d-%H-%M-%S.json")
+            with open(fname, "w") as f:
+                json.dump(pdata.to_dict(), f)
+            # maybe log filename?
 
         try:
             shards = res._shards
@@ -855,13 +861,15 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         AGG_LANG = "toplangs"
         AGG_DOMAIN = "topdomains"
 
+        profile = kwargs.pop("profile", None)
+
         search = self._basic_search(q, start_date, end_date, **kwargs)
         search.aggs.bucket(AGG_DAILY, "date_histogram", field="publication_date",
                            calendar_interval="day", min_doc_count=1)
         search.aggs.bucket(AGG_LANG, "terms", field="language.keyword", size=100)
         search.aggs.bucket(AGG_DOMAIN, "terms", field="canonical_domain", size=100)
         search = search.extra(track_total_hits=True)
-        res = self._search(search)
+        res = self._search(search, profile=profile)
         hits = _get_hits(res)
         if not hits:
             return {}           # checked by _is_no_results
@@ -884,6 +892,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         agg_name = "topterms"
         sampler_name = "sample"
 
+        profile = kwargs.pop("profile", None)
         search = self._basic_search(query, start_date, end_date, source=False, **kwargs)
         if aggr == "top":
             # To get more accurate results, the terms agg fetches more
@@ -938,7 +947,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                            "sampler",
                            shard_size=shard_size).aggs[agg_name] = agg_terms
 
-        res = self._search(search)
+        res = self._search(search, profile=profile)
         if (not _get_hits(res) or
             not (buckets := res["aggregations"][sampler_name][agg_name]["buckets"])):
             return {}
@@ -994,6 +1003,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         if page_sort_order not in ["asc", "desc"]:
             raise ValueError(page_sort_order)
 
+        profile = kwargs.pop("profile", None)
         self._prune_kwargs(kwargs)
         if kwargs:
             exstring = ", ".join(kwargs) # join key names
@@ -1006,8 +1016,6 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                      .extra(size=page_size, track_total_hits=True)\
                      .sort(sort_opts)
 
-        print(search.to_dict())
-
         if pagination_token:
             # important to use `search_after` instead of 'from' for
             # memory reasons related to paging through more than 10k
@@ -1015,7 +1023,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             after = [_b64_decode_page_token(pagination_token)] # list of keys
             search = search.extra(search_after=after)
 
-        res = self._search(search)
+        res = self._search(search, profile=profile)
         hits = _get_hits(res)
         if not hits:
             return ([], "")
