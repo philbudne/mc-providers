@@ -638,7 +638,7 @@ import time
 import elasticsearch
 import mcmetadata.urls as urls
 from elasticsearch_dsl import Search
-from elasticsearch_dsl.aggs import RareTerms, Sampler, SignificantTerms, Terms
+from elasticsearch_dsl.aggs import RareTerms, Sampler, SignificantTerms, SignificantText, Terms
 from elasticsearch_dsl.query import Match, QueryString
 #from elasticsearch_dsl.types import FieldSort, SortOptions # not in 8.15
 from elasticsearch_dsl.utils import AttrDict
@@ -936,6 +936,21 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
             agg_terms = RareTerms(field=field, exclude="[0-9].*")
             shard_size = 10
+        elif aggr == "significant_text":
+            # Returns interesting or unusual occurrences of terms in a
+            # set.  The terms selected are not simply the most popular
+            # terms in a set. They are the terms that have undergone a
+            # significant change in popularity measured between a
+            # foreground and background set.
+
+            agg_terms = SignificantText(field=field,
+                                         exclude=exclude) # stop words!
+            shard_size = 500
+
+            # See also "significant text" aggregation:
+            # Designed for use on `text` fields.
+            # Does not require field data.
+            # Re-analyzes text on the fly.
         else:
             raise ValueError(aggr)
 
