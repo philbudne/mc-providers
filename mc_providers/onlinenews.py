@@ -975,7 +975,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         NOTE! "exclude" in kwargs, with list of stop words!
         """
         logger.debug("MC._words %s %s %s %r", query, start_date, end_date, kwargs)
-        return self._terms(query, start_date, end_date, field="article_title", aggr="top", **kwargs)
+        field = "article_title" # or "text"
+        aggr = "top" # "significant_text" works?
+        return self._terms(query, start_date, end_date, field=field, aggr=aggr, **kwargs)
 
     @CachingManager.cache()
     def item(self, item_id: str) -> Dict:
