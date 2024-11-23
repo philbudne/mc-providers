@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 # PyPI
 import ciso8601
-import dateparser
+import dateparser     # used for publication_date in IA match_to_row
 import numpy as np              # for chunking
 from waybacknews.searchapi import SearchApiClient
 
@@ -107,7 +107,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         page, pagination_token = self._client.paged_articles(query, start_date, end_date, **kwargs)
         return self._matches_to_rows(page), pagination_token
 
-    def _word_counts(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Mapping:
+    def _word_counts(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> tuple[int, Mapping]:
         logger.debug("AP._word_counts %s %s %s %r", query, start_date, end_date, kwargs)
 
         kwargs.pop("exclude", None)
@@ -119,6 +119,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         for subquery in chunked_queries:
             logger.debug("AP.words subquery %s %s %s", subquery, start_date, end_date)
 
+            # for now just return top terms in article titles
             this_results = self._client.terms(subquery, start_date, end_date,
                                               self._client.TERM_FIELD_TITLE,
                                               self._client.TERM_AGGREGATION_TOP)
@@ -126,7 +127,8 @@ class OnlineNewsAbstractProvider(ContentProvider):
                 if self.DEBUG_WORDS:
                     logger.debug("AP.words results %s", this_results)
                 totals += Counter(this_results)
-        return totals
+        # PB: 5000 from "sample_size" in .words method
+        return (5000, totals)
 
     # Chunk'd
     @CachingManager.cache()
@@ -161,20 +163,24 @@ class OnlineNewsAbstractProvider(ContentProvider):
                 # explicitly raises RuntimeError if len(lang) != 2!!
                 logger.warning("error getting stop words for %s: %e", lang, e)
 
-        # for now just return top terms in article titles
-        sample_size = 5000      # PB: only used for scaling???
-        results_counter = self._word_counts(query, start_date, end_date,
-                                            exclude=list(stopwords), **kwargs)
+        sample_size, results_counter = self._word_counts(query, start_date, end_date,
+                                                         exclude=list(stopwords), **kwargs)
         if self.DEBUG_WORDS > 1:
             logger.debug("AP.words total %r", results_counter)
             for t, c in results_counter.items():
                 logger.debug("%s %d %.6f %s", t, c, c/sample_size, t.lower() not in stopwords)
 
         # and clean up results to return
-        top_terms = [dict(term=t.lower(), count=c, ratio=c/sample_size) for t, c in results_counter.items()
-                     if t.lower() not in stopwords]
+        top_terms = self._get_top_terms(results_counter, stopwords, sample_size)
         top_terms = sorted(top_terms, key=lambda x:x["count"], reverse=True)
         return top_terms
+
+    def _get_top_terms(self, results_counter: Mapping, stopwords: Iterable[str], sample_size: int) -> Dict:
+        """
+        eliminate any stopwords and format for return
+        """
+        return [dict(term=t.lower(), count=c, ratio=c/sample_size) for t, c in results_counter.items()
+                if t.lower() not in stopwords]
 
     # Chunk'd
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
@@ -189,9 +195,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
             results_counter += Counter(countable)
             # top_languages.extend(this_languages)
         
-        all_results = dict(results_counter)
-        
-        top_languages = [{'language': name, 'value': value, 'ratio': 0.0} for name, value in all_results.items()]
+        top_languages = [{'language': name, 'value': value, 'ratio': 0.0} for name, value in results_counter.items()]
         
         for item in top_languages:
             item['ratio'] = item['value'] / matching_count
@@ -306,9 +310,9 @@ class OnlineNewsAbstractProvider(ContentProvider):
     @classmethod
     def _selector_query_clauses(cls, kwargs: dict) -> str:
         """
-        take domains, filters, url_search_strings as kwargs and
-        return a list of query_strings to be OR'ed together
-        (to be AND'ed with user query OR used as a filter)
+        take domains and filters kwargs and
+        returns a list of query_strings to be OR'ed together
+        (to be AND'ed with user query *or* used as a filter)
         """
         logger.debug("AP._selector_query_clauses IN: %r", kwargs)
         selector_clauses = []
@@ -421,11 +425,11 @@ def format_and_append_uss(uss: str, url_list: list[str]) -> None:
     1. Start with fully qualified domain name WITHOUT http:// or https://
     2. End with "*"
     """
-    # currently url_search_strings start with fully
+    # currently url_search_strings MUST start with fully
     # qualified domain name (FQDN) without scheme or
     # leading slashes, and MUST end with a *!
     if not uss.endswith("*"):
-        sstr += "*"
+        uss += "*"
     url_list.append(f"http\\://{uss}")
     url_list.append(f"https\\://{uss}")
 
@@ -501,8 +505,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         logger.debug("MC._selector_query_clauses IN: %r", kwargs)
         selector_clauses = super()._selector_query_clauses(kwargs)
 
-        # PB: experimental, to try to get web-search out of query
-        # formatting biz.  Accepts a dict/defaultdict indexed by
+        # Here to try to get web-search out of query
+        # formatting biz.  Accepts a Mapping indexed by
         # domain_string, of lists (or sets!) of search_strings.
         url_search_strings: Mapping[str, Iterable[str]] = kwargs.get('url_search_strings', [])
         if url_search_strings:
@@ -522,7 +526,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                         cls._sanitize_query(
                             f"({domain_field}:{cdom} AND {mfuss})"))
 
-                    add_domain_selector(cdom, fuss)
+                    format_and_append_uss(cdom, fuss)
             else: # make query without domain (name) field check
                 # collect all the URL search strings
                 fuss = []
@@ -542,11 +546,17 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         logger.debug("MC.count %s %s %s %r", query, start_date, end_date, kwargs)
         # no chunking on MC
         results = self._overview_query(query, start_date, end_date, **kwargs)
+        return self._count_from_overview(results)
+
+    def _count_from_overview(self, results: Dict) -> int:
+        """
+        used in .count() and .languages()
+        """
         if self._is_no_results(results):
-            logger.debug("MC.count: no results")
+            logger.debug("MC._count_from_overview: no results")
             return 0
         count = results['total']
-        logger.debug("MC.count: %s", count)
+        logger.debug("MC._count_from_overview: %s", count)
         return count
 
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
@@ -589,12 +599,13 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         logger.debug("MC.languages: _overview returned %d items", len(top_languages))
 
         # now normalize
-        matching_count = self.count(query, start_date, end_date, **kwargs)
+        matching_count = self._count_from_overview(results)
         for item in top_languages:
             item['ratio'] = item['value'] / matching_count
         # Sort by count
         top_languages = sorted(top_languages, key=lambda x: x['value'], reverse=True)
         items = top_languages[:limit]
+
         logger.debug("MC.languages: returning %d items", len(items))
         return items
 
@@ -631,13 +642,14 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 # code dragged up from mediacloud.py and news-search-api.py
 #
 import base64
+import json
 import os
 import socket
 import time
 
 import elasticsearch
 import mcmetadata.urls as urls
-from elasticsearch_dsl import Search
+from elasticsearch_dsl import Search, Response
 from elasticsearch_dsl.aggs import RareTerms, Sampler, SignificantTerms, SignificantText, Terms
 from elasticsearch_dsl.query import Match, QueryString
 #from elasticsearch_dsl.types import FieldSort, SortOptions # not in 8.15
@@ -699,24 +711,62 @@ def _b64_encode_page_token(strng: str) -> str:
 def _b64_decode_page_token(strng: str) -> str:
     return base64.b64decode(strng.replace("~", "=").encode(), b"-_").decode()
 
-def _get_hits(res: AttrDict) -> list[AttrDict]:
+def _get_hits(res: Response) -> list[AttrDict]:
     """
     retrieve hits array from _search results
+    here to check Response in MOST cases
     """
-    h1 = _get(res, "hits")
-    if not h1:
+    # Response.success() wants
+    # `self._shards.total == self._shards.successful and not self.timed_out`
+    # _search method will have already logged any failed shards.
+    if not res.success():
+        logger.warn("res.success() is False!")
         return []
-    return _get(h1, "hits", [])
+
+    try:
+        return res.hits.hits
+    except AttributeError:
+        logger.warn("res.hits.hits failed!")
+        return []
 
 _ES_MAXPAGE = 1000
 
 class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     """
-    experimental/temporary version of MC Provider going
-    direct to Elastic (skipping both the news-search-api server
-    and mediacloud.py, the client library that talks to n-s-a)
+    version of MC Provider going direct to ES.
+
+    Consolidates query formatting/creation previously spread
+    across multiple files, including:
+
+    * web-search/mcweb/backend/search/utils.py (url_search_strings)
+    * this file (domain search string)
+    * mc-providers/mc_providers/mediacloud.py (date ranges)
+    * news-search-api/api.py
+    * news-search-api/client.py (DSL, including aggegations)
     """
     def __init__(self, *args, **kwargs):
+        # CAN pass string here, but feeding all the resulting JSON
+        # files to es-tools/collapse-esperf.py for flamegraphing
+        # could get you a mish-mash of different queries' results.
+        self._profile = kwargs.pop("profile", False)
+
+        # total seconds from the last profiled query:
+        self._last_es_seconds = -1.0
+
+        # https://www.elastic.co/guide/en/elasticsearch/reference/current/api-conventions.html
+        # says:
+        #   The X-Opaque-Id header accepts any arbitrary
+        #   value. However, we recommend you limit these values to a
+        #   finite set, such as an ID per client. Don’t generate a
+        #   unique X-Opaque-Id header for every request. Too many
+        #   unique X-Opaque-Id values can prevent Elasticsearch from
+        #   deduplicating warnings in the deprecation logs.
+        # Which probaly REALLY means one string per client LIBRARY!
+        opaque_id = kwargs.pop("client_id", None) # more generic public name
+        if not opaque_id:
+            opaque_id = f"mc-providers@{socket.gethostname()}"
+
+        # after pop-ing any local-only args:
         super().__init__(*args, **kwargs)
 
         # Will always (re)start at first server?  No state keeping
@@ -724,11 +774,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         # for each query).  Maybe shuffle the list if library doesn't?
         eshosts = (self._base_url or "").split(",") # comma separated list of http://SERVER:PORT
 
-        # hopefully will help tie tasks seen in es.tasks() API to user/query!
-        user = os.environ.get("USER") or str(os.getuid())
-        # XXX include library version? class name??
-        opaque_id = f"providers {socket.gethostname()}:{user}:{os.getpid()}"
-
+        # XXX NOTE!  retrying something that times out means
+        # we may timeout (causing load) multiple times!!
         self._es = elasticsearch.Elasticsearch(eshosts,
                                                max_retries=3,
                                                opaque_id=opaque_id,
@@ -736,20 +783,28 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
 
     def get_client(self):
-        # no client class here!
-        # called from OnlineNewsAbstractProvider, to set _client, so
-        # can't raise exceptions, but want _client to be None, to
-        # catch any attempts to use it!
+        """
+        called from OnlineNewsAbstractProvider constructor to set _client
+        so must pretend we've done it.
+        """
+        # tempting to stash Elasticsearch object here, BUT, at least
+        # for initial work wanted to make sure any existing code path
+        # that tried using the _client object would blow up.  It
+        # probably helps mypy to have a dedicated _es member for
+        # Elasticsearch object.
         return None
 
     @staticmethod
     def _sanitize_query(fstr: str) -> str:
         """
-        Do quoting done by _sanitize_es_query in mediacloud.py
+        Do quoting done by _sanitize_es_query in mediacloud.py client library
         """
         return fstr.replace("/", r"\/")
 
     def _fields(self, expanded) -> list[str]:
+        """
+        from news-search-api/client.py QueryBuilder constructor
+        """
         fields = ["article_title", "publication_date", "indexed_date",
                   "language", "full_language", "canonical_domain", "url", "original_url"]
         if expanded:
@@ -774,8 +829,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             .query(QueryString(query=sq, default_field="text_content", default_operator="and"))\
             .filter("range", publication_date={'gte': start, "lte": end})
 
-        # evaluating selectors (domains/url_search_strings) in "filter context".
+        # Evaluating selectors (domains/filters/url_search_strings) in "filter context";
+        # Supposed to be faster, and enable caching of which documents to look at.
         # https://www.elastic.co/guide/en/elasticsearch/reference/current/query-filter-context.html#filter-context
+        # Maybe someday construct DSL rather than resorting to string we format
+        # only to have ES have to parse it??
         sqs = self._selector_query_string(kwargs)
         if sqs:
             s = s.filter(QueryString(query=sqs))
@@ -783,7 +841,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         if source:              # return source?
             return s.source(self._fields(expanded))
         else:
-            return s.source(False)
+            return s.source(False) # no source fields in hits
 
     def _is_no_results(self, results) -> bool:
         """
@@ -794,12 +852,12 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     def _index_from_dates(self, start_date: dt.datetime | None, end_date: dt.datetime | None) -> list[str]:
         """
         return list of indices to search for a given date range.
-        if indexing goes being split by publication_date (by year or quarter?)
+        if indexing goes back to being split by publication_date (by year or quarter?)
         this could limit the number of shards that need to be queried
         """
         return [self.DEFAULT_COLLECTION]
 
-    def _search(self, search: Search, profile: str | None = None) -> AttrDict:
+    def _search(self, search: Search, profile: str | bool = False) -> Response:
         """
         one place to send queries to ES, for logging
         """
@@ -808,15 +866,16 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         t0 = time.monotonic()
         if self._caching < 0:
             # Here to try to force ES not to use cached results (for testing).
-            # .execute(ignore_cache=True) only effects in-library caching; this
-            # puts ?request_cache=false on the request URL, which
+            # .execute(ignore_cache=True) only effects in-library caching.
+            # This puts ?request_cache=false on the request URL, which
             # https://www.elastic.co/guide/en/elasticsearch/reference/current/shard-request-cache.html
-            # says "The request_cache query-string parameter can be used to
-            # enable or disable caching on a per-request basis. If set, it
-            # overrides the index-level setting"
+            # says "The request_cache query-string parameter can be
+            # used to enable or disable caching on a per-request
+            # basis. If set, it overrides the index-level setting"
             search = search.params(request_cache=False)
 
-        if isinstance(profile, str):
+        profile = profile or self._profile
+        if profile:
             search = search.extra(profile=True)
 
         res = search.execute()
@@ -824,27 +883,56 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         logger.info("MC._search ES time %s ms (%.3f elapsed)", _get(res, "took", -1), elapsed*1000)
 
         if profile and (pdata := _get(res, "profile")):
-            import json
-            fname = time.strftime(f"{profile}-%Y-%m-%d-%H-%M-%S.json")
-            with open(fname, "w") as f:
-                json.dump(pdata.to_dict(), f)
-            # maybe log filename?
+            self._profile_data(pdata, profile)
 
-        try:
+        try:                    # look for circuit breaker trips
+            # Response.success() wants success
+            # self._shards.total == self._shards.successful and not self.timed_out
+            # but we can't be choosey right now because of top words (mis)behavior
+            # the logging below WILL happen often!
             shards = res._shards
             if shards:
                 failed = shards.failed
+                total = shards.total
                 if failed:
-                    logger.info("MC._search _shards.failed: %d", failed)
+                    # hundreds of shards, so summarize...
+                    # (almost always circuit breakers)
                     reasons = Counter()
                     for shard in shards.failures:
                         rt = shard.reason.type
                         if rt:
                             reasons[rt] += 1
-                    logger.info("MC._search failure reasons: %r", dict(reasons))
-        except (ValueError, KeyError):
-            pass
+                    logger.info("MC._search %d/%d shards failed; reasons: %r", failed, total, dict(reasons))
+        except (ValueError, KeyError) as e:
+            logger.debug("error looking at results: %r", e)
         return res
+
+    def _profile_data(self, pdata, profile: str | bool) -> None:
+        """
+        digest profiling data
+        """
+        if isinstance(profile, str):
+            fname = time.strftime(f"{profile}-%Y-%m-%d-%H-%M-%S.json")
+            with open(fname, "w") as f:
+                json.dump(pdata.to_dict(), f)
+            logger.debug("wrote profiling data to %s", fname)
+
+        # sum up ES internal times
+        query_ns = rewrite_ns = coll_ns = agg_ns = 0
+        for shard in pdata.shards: # list
+            for search in shard.searches: # list
+                for q in search.query:    # list
+                    query_ns += q.time_in_nanos
+                for coll in search.collector: # list
+                    coll_ns += coll.time_in_nanos
+                rewrite_ns += search.rewrite_time
+            for agg in shard.aggregations:
+                agg_ns += agg.time_in_nanos
+        es_nanos = query_ns + rewrite_ns + coll_ns + agg_ns
+        self._last_es_seconds = es_nanos / 1e9
+        # avoid floating point divisions that may not be displayed:
+        logger.debug("ES time: %.6f sec (ns: query: %d rewrite: %d collectors: %d aggs: %d)",
+                     self._last_es_seconds, query_ns, rewrite_ns, coll_ns, agg_ns)
 
     @CachingManager.cache('overview')
     def _overview_query(self, q: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> dict:
@@ -885,7 +973,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         }
 
     def _terms(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
-               field: str, aggr: str, exclude: list[str] = [], **kwargs) -> Dict:
+               field: str, aggr: str, exclude: list[str] = [], **kwargs) -> tuple[int, Dict]:
         """
         only called internally, so no field/aggr checks
         """
@@ -930,27 +1018,28 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # Does not require field data.
             # Re-analyzes text on the fly.
         elif aggr == "rare":
+            # PB: I can't find where I got the exclude string from!
+
             # "rare" terms are at the long-tail of the distribution
             # and are not frequent. Conceptually, this is like a terms
             # aggregation that is sorted by _count ascending.
 
             agg_terms = RareTerms(field=field, exclude="[0-9].*")
             shard_size = 10
-        elif aggr == "significant_text":
+        elif aggr == "significant_text": # phil's addition
             # Returns interesting or unusual occurrences of terms in a
             # set.  The terms selected are not simply the most popular
             # terms in a set. They are the terms that have undergone a
             # significant change in popularity measured between a
             # foreground and background set.
 
+            # Can be used on any `text` field; does NOT require
+            # "fielddata" (and the memory problems that entails) BUT
+            # means text needs to be analyzed on the fly, with higher
+            # CPU usage.
             agg_terms = SignificantText(field=field,
                                          exclude=exclude) # stop words!
             shard_size = 500
-
-            # See also "significant text" aggregation:
-            # Designed for use on `text` fields.
-            # Does not require field data.
-            # Re-analyzes text on the fly.
         else:
             raise ValueError(aggr)
 
@@ -961,23 +1050,50 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         search.aggs.bucket(sampler_name,
                            "sampler",
                            shard_size=shard_size).aggs[agg_name] = agg_terms
+ 
+        # Try asking for no "hits" array; This means we can't use
+        # _get_hits (which uses res.success() which checks for failed
+        # shards (which often happen here due to circuit breakers
+        # tripping) here! track_total_hits=False is the default,
+        # but being extra careful.
+        search = search.extra(size=0, track_total_hits=False)
 
         res = self._search(search, profile=profile)
-        if (not _get_hits(res) or
-            not (buckets := res["aggregations"][sampler_name][agg_name]["buckets"])):
-            return {}
 
-        return _format_counts(buckets)
+        # Response.success() wants _shards.success == _shards.total,
+        # but we need to be happy with what we can get!
+        # _search will already have logged a summary of failed shards.
+        if not res.timed_out:
+            samples = res["aggregations"][sampler_name]
+            buckets = samples[agg_name]["buckets"]
+            doc_count = samples["doc_count"]
+            logger.debug("scanned %d docs, %d buckets returned", doc_count, len(buckets))
+            if buckets and doc_count:
+                return (doc_count, _format_counts(buckets))
 
-    def _word_counts(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Mapping:
+        return (0, {})
+
+
+    def _word_counts(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> tuple[int, Mapping]:
         """
         called by OnlineNewsAbstractProvider.words.
-        NOTE! "exclude" in kwargs, with list of stop words!
+        NOTE! uses "exclude" in kwargs, with list of stop words!
         """
         logger.debug("MC._words %s %s %s %r", query, start_date, end_date, kwargs)
+
         field = "article_title" # or "text"
-        aggr = "top" # "significant_text" works?
+        #field = "text"
+        aggr = "top"
+        # aggr = "significant_text"
         return self._terms(query, start_date, end_date, field=field, aggr=aggr, **kwargs)
+
+    def _get_top_terms(self, results_counter: Mapping, stopwords: Iterable[str], sample_size: int) -> Dict:
+        """
+        called by OnlineNewsAbstractProvider.words.
+        NOTE! Not using stopwords (we've asked ES to exclude them)
+        XXX SHOULD BE TESTED!!!
+        """
+        return [dict(term=t.lower(), count=c, ratio=c/sample_size) for t, c in results_counter.items()]
 
     @CachingManager.cache()
     def item(self, item_id: str) -> Dict:
@@ -986,7 +1102,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             .source(includes=self._fields(expanded=True)) # always includes full_text!!
         res = self._search(s)
         hits = _get_hits(res)
-        if len(hits) == 0:
+        if not hits:
             return {}
 
         # double conversion!
