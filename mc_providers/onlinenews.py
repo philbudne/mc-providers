@@ -1018,12 +1018,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # Does not require field data.
             # Re-analyzes text on the fly.
         elif aggr == "rare":
-            # PB: I can't find where I got the exclude string from!
-
             # "rare" terms are at the long-tail of the distribution
             # and are not frequent. Conceptually, this is like a terms
             # aggregation that is sorted by _count ascending.
 
+            # from https://github.com/internetarchive/web_collection_search/blob/2e189b5/api.py#L179??
             agg_terms = RareTerms(field=field, exclude="[0-9].*")
             shard_size = 10
         elif aggr == "significant_text": # phil's addition
