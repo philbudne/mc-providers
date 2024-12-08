@@ -642,9 +642,9 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 # code dragged up from mediacloud.py and news-search-api.py
 #
 import base64
+import importlib.metadata       # for default opaque_id
 import json
 import os
-import socket
 import time
 
 import elasticsearch
@@ -654,6 +654,14 @@ from elasticsearch_dsl.aggs import RareTerms, Sampler, SignificantTerms, Signifi
 from elasticsearch_dsl.query import Match, QueryString
 #from elasticsearch_dsl.types import FieldSort, SortOptions # not in 8.15
 from elasticsearch_dsl.utils import AttrDict
+
+# from api-client/.../api.py
+try:
+    VERSION = "v" + importlib.metadata.version("mc-providers")
+except importlib.metadata.PackageNotFoundError:
+    VERSION = "dev"
+
+OPAQUE_ID = f"mc-providers {VERSION}"
 
 def _get(ad: AttrDict, key: str, default: Any = None) -> Any:
     """
@@ -745,9 +753,10 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     * news-search-api/client.py (DSL, including aggegations)
     """
     def __init__(self, *args, **kwargs):
-        # CAN pass string here, but feeding all the resulting JSON
-        # files to es-tools/collapse-esperf.py for flamegraphing
-        # could get you a mish-mash of different queries' results.
+        # CAN pass string (filename) here, but feeding all the
+        # resulting JSON files to es-tools/collapse-esperf.py for
+        # flamegraphing could get you a mish-mash of different
+        # queries' results.
         self._profile = kwargs.pop("profile", False)
 
         # total seconds from the last profiled query:
@@ -762,9 +771,10 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         #   unique X-Opaque-Id values can prevent Elasticsearch from
         #   deduplicating warnings in the deprecation logs.
         # Which probaly REALLY means one string per client LIBRARY!
+        # Tho *VERY* tempting to pass web-search username!!!
         opaque_id = kwargs.pop("client_id", None) # more generic public name
         if not opaque_id:
-            opaque_id = f"mc-providers@{socket.gethostname()}"
+            opaque_id = OPAQUE_ID
 
         # after pop-ing any local-only args:
         super().__init__(*args, **kwargs)
