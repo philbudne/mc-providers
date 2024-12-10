@@ -936,10 +936,14 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                 for coll in search.collector: # list
                     coll_ns += coll.time_in_nanos
                 rewrite_ns += search.rewrite_time
+            # XXX sum by aggregation name?
             for agg in shard.aggregations:
                 agg_ns += agg.time_in_nanos
         es_nanos = query_ns + rewrite_ns + coll_ns + agg_ns
         self._last_es_seconds = es_nanos / 1e9
+        # XXX save components???
+        # XXX sum over Provider lifetime??
+
         # avoid floating point divisions that may not be displayed:
         logger.debug("ES time: %.6f sec (ns: query: %d rewrite: %d collectors: %d aggs: %d)",
                      self._last_es_seconds, query_ns, rewrite_ns, coll_ns, agg_ns)
