@@ -308,7 +308,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return fstr
 
     @classmethod
-    def _selector_query_clauses(cls, kwargs: dict) -> str:
+    def _selector_query_clauses(cls, kwargs: dict) -> list[str]:
         """
         take domains and filters kwargs and
         returns a list of query_strings to be OR'ed together
@@ -336,12 +336,16 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return selector_clauses
 
     @classmethod
+    def _selector_query_string_from_clauses(cls, clauses: list[str]) -> str:
+        return " OR ".join(clauses)
+
+    @classmethod
     def _selector_query_string(cls, kwargs: dict) -> str:
         """
         takes kwargs (as dict) return a query_string to be AND'ed with
         user query or used as a filter.
         """
-        return " OR ".join(cls._selector_query_clauses(kwargs)) # takes dict
+        return cls._selector_query_string_from_clauses(cls._selector_query_clauses(kwargs))
 
     @classmethod
     def _assembled_query_str(cls, query: str, **kwargs) -> str:
@@ -646,6 +650,7 @@ import importlib.metadata       # for default opaque_id
 import json
 import os
 import time
+from typing import Callable
 
 import elasticsearch
 import mcmetadata.urls as urls
@@ -821,6 +826,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             fields.append("text_content")
         return fields
 
+    # relative costs of days vs sources
+    # just guesses for now
+    SOURCE_WEIGHT = 1
+    DAY_WEIGHT = 25
+
     def _basic_search(self, user_query: str, start_date: dt.datetime, end_date: dt.datetime,
                      expanded: bool = False, source: bool = True, **kwargs) -> Search:
         """
@@ -836,17 +846,31 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         end = end_date.strftime("%Y-%m-%d") # T23:59:59:999_999_999Z implied?
 
         s = Search(index=self._index_from_dates(start_date, end_date), using=self._es)\
-            .query(QueryString(query=sq, default_field="text_content", default_operator="and"))\
-            .filter("range", publication_date={'gte': start, "lte": end})
+            .query(QueryString(query=sq, default_field="text_content", default_operator="and"))
 
         # Evaluating selectors (domains/filters/url_search_strings) in "filter context";
         # Supposed to be faster, and enable caching of which documents to look at.
         # https://www.elastic.co/guide/en/elasticsearch/reference/current/query-filter-context.html#filter-context
-        # Maybe someday construct DSL rather than resorting to string we format
-        # only to have ES have to parse it??
-        sqs = self._selector_query_string(kwargs)
-        if sqs:
-            s = s.filter(QueryString(query=sqs))
+
+        # Apply filter with the smallest result set first.
+        # could include languages etc here
+
+        filters : list[tuple[int, Callable]] = [
+            ((end_date - start_date).days * self.DAY_WEIGHT,
+             lambda s : s.filter("range", publication_date={'gte': start, "lte": end}))
+        ]
+
+        selector_clauses = self._selector_query_clauses(kwargs)
+        if selector_clauses:
+            # Maybe someday construct DSL rather than resorting to string we format
+            # only to have ES have to parse it??
+            sqs = self._selector_query_string_from_clauses(selector_clauses)
+            filters.append((len(selector_clauses) * self.SOURCE_WEIGHT,
+                            lambda s : s.filter(QueryString(query=sqs))))
+
+        filters.sort()          # smallest weight first
+        for weight, func in filters:
+            s = func(s)
 
         if source:              # return source?
             return s.source(self._fields(expanded))
@@ -864,6 +888,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         return list of indices to search for a given date range.
         if indexing goes back to being split by publication_date (by year or quarter?)
         this could limit the number of shards that need to be queried
+
+        I
         """
         return [self.DEFAULT_COLLECTION]
 
@@ -929,9 +955,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         # sum up ES internal times
         query_ns = rewrite_ns = coll_ns = agg_ns = 0
-        for shard in pdata.shards: # list
-            for search in shard.searches: # list
-                for q in search.query:    # list
+        for shard in pdata.shards: # AttrList
+            for search in shard.searches: # AttrList
+                for q in search.query:    # AttrList
                     query_ns += q.time_in_nanos
                 for coll in search.collector: # list
                     coll_ns += coll.time_in_nanos
@@ -945,7 +971,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         # XXX sum over Provider lifetime??
 
         # avoid floating point divisions that may not be displayed:
-        logger.debug("ES time: %.6f sec (ns: query: %d rewrite: %d collectors: %d aggs: %d)",
+        logger.info("ES time: %.6f sec (ns: query: %d rewrite: %d collectors: %d aggs: %d)",
                      self._last_es_seconds, query_ns, rewrite_ns, coll_ns, agg_ns)
 
     @CachingManager.cache('overview')
@@ -1150,9 +1176,10 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             raise ValueError(page_sort_order)
 
         profile = kwargs.pop("profile", None)
-        self._prune_kwargs(kwargs)
-        if kwargs:
-            exstring = ", ".join(kwargs) # join key names
+        kwcopy = kwargs.copy()
+        self._prune_kwargs(kwcopy)
+        if kwcopy:
+            exstring = ", ".join(kwcopy) # join key names
             raise TypeError(f"unknown keyword args: {exstring}")
 
         # XXX types.SortOptions (not in 8.15.4)
