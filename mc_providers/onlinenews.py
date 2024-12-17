@@ -781,6 +781,14 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         if not opaque_id:
             opaque_id = OPAQUE_ID
 
+        # https://www.elastic.co/guide/en/elasticsearch/reference/7.17/search-search.html#search-preference
+        #   "Any string that does not start with _. If the cluster
+        #   state and selected shards do not change, searches using
+        #   the same <custom-string> value are routed to the same
+        #   shards in the same order.
+        # pass user-id or a session id
+        self._preference = kwargs.pop("preference", None)
+
         # after pop-ing any local-only args:
         super().__init__(*args, **kwargs)
 
@@ -847,6 +855,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         s = Search(index=self._index_from_dates(start_date, end_date), using=self._es)\
             .query(QueryString(query=sq, default_field="text_content", default_operator="and"))
+
+        if self._preference:
+            s = s.params(preference=self._preference)
 
         # Evaluating selectors (domains/filters/url_search_strings) in "filter context";
         # Supposed to be faster, and enable caching of which documents to look at.
