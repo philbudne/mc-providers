@@ -792,17 +792,16 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         # after pop-ing any local-only args:
         super().__init__(*args, **kwargs)
 
-        # Will always (re)start at first server?  No state keeping
-        # is possible with web-search (creates a new Provider instance
-        # for each query).  Maybe shuffle the list if library doesn't?
         eshosts = (self._base_url or "").split(",") # comma separated list of http://SERVER:PORT
 
-        # XXX NOTE!  retrying something that times out means
-        # we may timeout (causing load) multiple times!!
+        # Retries without delay (never mind backoff!)
+        # web-search creates new Provider for each API request,
+        # so randomize the pool.
         self._es = elasticsearch.Elasticsearch(eshosts,
                                                max_retries=3,
                                                opaque_id=opaque_id,
-                                               request_timeout=self._timeout)
+                                               request_timeout=self._timeout,
+                                               randomize_nodes_in_pool=True)
 
 
     def get_client(self):
