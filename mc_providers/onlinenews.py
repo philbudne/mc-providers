@@ -776,7 +776,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         #   unique X-Opaque-Id values can prevent Elasticsearch from
         #   deduplicating warnings in the deprecation logs.
         # Which probaly REALLY means one string per client LIBRARY!
-        # Tho *VERY* tempting to pass web-search username!!!
+        # See preference below.
         opaque_id = kwargs.pop("client_id", None) # more generic public name
         if not opaque_id:
             opaque_id = OPAQUE_ID
