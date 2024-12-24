@@ -1,5 +1,3 @@
-# XXX maybe make _assemble.... take dict, and _prune (pop) args there???
-
 import datetime as dt
 import json
 import logging
@@ -656,9 +654,12 @@ import elasticsearch
 import mcmetadata.urls as urls
 from elasticsearch_dsl import Search, Response
 from elasticsearch_dsl.aggs import RareTerms, Sampler, SignificantTerms, SignificantText, Terms
-from elasticsearch_dsl.query import Match, QueryString
+from elasticsearch_dsl.function import RandomScore
+from elasticsearch_dsl.query import FunctionScore, Match, QueryString
 #from elasticsearch_dsl.types import FieldSort, SortOptions # not in 8.15
 from elasticsearch_dsl.utils import AttrDict
+
+from .language import terms_without_stopwords
 
 # from api-client/.../api.py
 try:
@@ -1130,8 +1131,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
         logger.debug("MC._words %s %s %s %r", query, start_date, end_date, kwargs)
 
-        field = "article_title" # or "text"
-        #field = "text"
+        field = "article_title" # or "text_content"
         aggr = "top"
         # aggr = "significant_text"
         return self._terms(query, start_date, end_date, field=field, aggr=aggr, **kwargs)
@@ -1243,3 +1243,65 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
             if not next_page_token:
                 break
+
+    RANDOM_STORY_WORDS_SAMPLES = 5000   # number of stories to pull
+    def _random_story_words(self,
+                            query: str,
+                            start_date: dt.datetime, end_date: dt.datetime,
+                            limit: int = 100, # number of top words to return
+                            **kwargs):
+
+        full_text = bool(kwargs.pop("full_text", False)) # XXX TEMP?
+
+        search = self._basic_search(query, start_date, end_date, **kwargs)
+
+        # https://github.com/elastic/elasticsearch-dsl-py/issues/1369
+        # https://github.com/csinchok/django-bulbs/blob/1ba8f0c95502f952d01617188e947346959a7e30/bulbs/content/search.py#L2
+
+        search = search.query(
+            FunctionScore(
+                functions=[
+                    RandomScore(
+                        # needed for multi-page query?:
+                        # seed=int(time.time()), field="_seq_no"
+                    )
+                ]
+            )
+        )
+
+        if full_text:
+            # 3mo US-national query: 3.5s, processing: 28s
+            text = "text_content"
+        else:
+            # 3mo US-national query: 1.5s, processing 0.6s
+            text = "article_title"
+
+        search = search.source([text, "language"])
+        search = search.extra(size=self.RANDOM_STORY_WORDS_SAMPLES)
+
+        search_results = self._search(search)
+        hits = _get_hits(search_results)
+        if not hits:
+            return []
+
+        # cribbed from ContentProvider._sampled_title_words
+
+        sampled_count = 0
+        counts = Counter()
+        #indices = Counter()
+        t0 = time.monotonic()
+        for hit in hits:
+            #indices[hit._index] += 1
+            src = hit["_source"]
+            sampled_count += 1
+            counts.update(terms_without_stopwords(src["language"], src[text]))
+
+        #print(indices)
+        # clean up results
+        results = [{"term": w, "count": c, "ratio": c/sampled_count}
+                   for w, c in counts.most_common(limit)]
+        logger.info("_random_story_words processing time %.3f ms", (time.monotonic() - t0) * 1000)
+        return results
+
+    # comment out to revert to ES aggregation based version:
+    words = _random_story_words
