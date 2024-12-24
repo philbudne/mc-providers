@@ -30,8 +30,8 @@ dependencies = [
     "fasttext == 0.9.*",
     "mediacloud-metadata >= 1.0.0",
     "mediacloud == 4.*",
-    "elasticsearch" == "8.15.*", # keep in sync w/ ES major version?
-    "elasticsearch-dsl" == "8.15.*", # keep in sync w/ ES major version!
+    "elasticsearch == 8.15.*", # keep in sync w/ ES major version?
+    "elasticsearch-dsl == 8.15.*", # keep in sync w/ ES major version!
 ]
 
 [tool.flit.sdist]
