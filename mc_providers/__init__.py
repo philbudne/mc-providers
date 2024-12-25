@@ -6,7 +6,7 @@ from .provider import ContentProvider
 from .reddit import RedditPushshiftProvider
 from .twitter import TwitterTwitterProvider
 from .youtube import YouTubeYouTubeProvider
-from .onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudProvider
+from .onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudESProvider
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ def provider_for(platform: str, source: str, api_key: Optional[str], base_url: O
             platform_provider = OnlineNewsWaybackMachineProvider(base_url, timeout, caching)
 
         elif (platform == PLATFORM_ONLINE_NEWS) and (source == PLATFORM_SOURCE_MEDIA_CLOUD):
-            platform_provider = OnlineNewsMediaCloudProvider(base_url, timeout, caching)
+            platform_provider = OnlineNewsMediaCloudESProvider(base_url, timeout, caching)
 
         else:
             raise UnknownProviderException(platform, source)
