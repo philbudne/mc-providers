@@ -90,7 +90,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     
     # Chunk'd
     def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs):
-        for subquery in self._assemble_and_chunk_query_str(query, kwargs):
+        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
             for page in self._client.all_articles(subquery, start_date, end_date, **kwargs):
                 yield self._matches_to_rows(page)
 
@@ -174,7 +174,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         top_terms = sorted(top_terms, key=lambda x:x["count"], reverse=True)
         return top_terms
 
-    def _get_top_terms(self, results_counter: Mapping, stopwords: Iterable[str], sample_size: int) -> Dict:
+    def _get_top_terms(self, results_counter: Mapping, stopwords: Iterable[str], sample_size: int) -> List[Dict]:
         """
         eliminate any stopwords and format for return
         """
@@ -188,7 +188,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         matching_count = self.count(query, start_date, end_date, **kwargs)
 
         results_counter: Counter = Counter({})
-        for subquery in subqself._assemble_and_chunk_query_str_kw(query, kwargs):
+        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
             this_languages = self._client.top_languages(subquery, start_date, end_date, **kwargs)
             countable = {item["name"]: item["value"] for item in this_languages}
             results_counter += Counter(countable)
@@ -249,7 +249,10 @@ class OnlineNewsAbstractProvider(ContentProvider):
             if chunk and domain_queries_too_big:
                 while domain_queries_too_big:
                     chunked_domains = np.array_split(domains, domain_divisor)
-                    domain_queries = [cls._assembled_query_str(base_query, domains=dom) for dom in chunked_domains]
+                    domain_queries = [
+                        cls._assembled_query_str(base_query, domains=dom)
+                        for dom in chunked_domains
+                    ]
                     domain_queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in domain_queries])
                     domain_divisor *= 2
                 
@@ -290,10 +293,11 @@ class OnlineNewsAbstractProvider(ContentProvider):
         kwargs.pop("url_search_string_domain", None) # TEMP
 
     @classmethod
-    def _assemble_and_chunk_query_str_kw(cls, base_query: str, chunk: bool = True, kwargs: dict = {}):
+    def _assemble_and_chunk_query_str_kw(cls, base_query: str, kwargs: dict = {}):
         """
-        takes kwargs as dict, removes items that shouldn't be sent to _client
+        takes kwargs as *dict*, removes items that shouldn't be sent to _client
         """
+        chunk = kwargs.get("chunk", True)
         queries = cls._assemble_and_chunk_query_str(base_query, chunk=chunk, **kwargs)
         cls._prune_kwargs(kwargs)
         return queries
@@ -499,7 +503,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
 
     @classmethod
-    def _selector_query_clauses(cls, kwargs: dict) -> str:
+    def _selector_query_clauses(cls, kwargs: dict) -> List[str]:
         """
         take domains, filters, url_search_strings as kwargs
         return a list of query_strings to be OR'ed together
@@ -520,7 +524,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
                 # here with mapping of cdom => iterable[search_string]
                 for cdom, search_strings in url_search_strings.items():
-                    fuss = [] # formatted url_search_strings
+                    fuss: List[str] = [] # formatted url_search_strings
                     for sstr in search_strings:
                         format_and_append_uss(sstr, fuss)
 
@@ -932,7 +936,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                 if failed:
                     # hundreds of shards, so summarize...
                     # (almost always circuit breakers)
-                    reasons = Counter()
+                    reasons: Counter[str] = Counter()
                     for shard in shards.failures:
                         rt = shard.reason.type
                         if rt:
@@ -1124,13 +1128,14 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         # aggr = "significant_text"
         return self._terms(query, start_date, end_date, field=field, aggr=aggr, **kwargs)
 
-    def _get_top_terms(self, results_counter: Mapping, stopwords: Iterable[str], sample_size: int) -> Dict:
+    def _get_top_terms(self, results_counter: Mapping, stopwords: Iterable[str], sample_size: int) -> List[Dict]:
         """
         called by OnlineNewsAbstractProvider.words.
         NOTE! Not using stopwords (we've asked ES to exclude them)
         XXX SHOULD BE TESTED!!!
         """
-        return [dict(term=t.lower(), count=c, ratio=c/sample_size) for t, c in results_counter.items()]
+        return [dict(term=t.lower(), count=c, ratio=c/sample_size)
+                for t, c in results_counter.items()]
 
     @CachingManager.cache()
     def item(self, item_id: str) -> Dict:
@@ -1275,7 +1280,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         # cribbed from ContentProvider._sampled_title_words
 
         sampled_count = 0
-        counts = Counter()
+        counts: Counter[str] = Counter()
         #indices = Counter()
         t0 = time.monotonic()
         for hit in hits:
