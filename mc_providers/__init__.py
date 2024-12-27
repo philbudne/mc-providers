@@ -2,7 +2,7 @@ import logging
 from typing import List, Optional
 
 from .exceptions import UnknownProviderException, UnavailableProviderException, APIKeyRequired
-from .provider import ContentProvider
+from .provider import ContentProvider, DEFAULT_TIMEOUT, set_default_timeout
 from .reddit import RedditPushshiftProvider
 from .twitter import TwitterTwitterProvider
 from .youtube import YouTubeYouTubeProvider
@@ -24,14 +24,6 @@ PLATFORM_SOURCE_WAYBACK_MACHINE = 'waybackmachine'
 PLATFORM_SOURCE_MEDIA_CLOUD = "mediacloud"
 
 NAME_SEPARATOR = "-"
-
-DEFAULT_TIMEOUT = 60  # to be used across all the providers; override via one-time call to set_default_timeout
-
-
-def set_default_timeout(timeout: int):
-    global DEFAULT_TIMEOUT
-    DEFAULT_TIMEOUT = timeout
-
 
 def provider_name(platform: str, source: str) -> str:
     return platform + NAME_SEPARATOR + source

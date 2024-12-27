@@ -15,7 +15,6 @@ from .language import top_detected
 
 TWITTER_API_URL = 'https://api.twitter.com/2/'
 TWITTER_DATE_FORMAT = '%Y-%m-%dT%H:%M:%S.%f%z'
-DEFAULT_TIMEOUT = 60
 
 
 @deprecated
@@ -27,12 +26,11 @@ class TwitterTwitterProvider(ContentProvider):
     MAX_QUERY_LENGTH = 1024  # I think?
     POLITENESS_DELAY = 1  # sleep for half a second if we're gonna spam a bunch of queries
     
-    def __init__(self, bearer_token=None, timeout=None, caching=True):
-        super(TwitterTwitterProvider, self).__init__(caching)
+    def __init__(self, bearer_token=None, **kwargs):
+        super(TwitterTwitterProvider, self).__init__(**kwargs)
         self._logger = logging.getLogger(__name__)
         self._bearer_token = bearer_token
         self._session = requests.Session()  # better performance to put all HTTP through this one object
-        self._timeout = timeout or DEFAULT_TIMEOUT
 
     #Chunk'd
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10, **kwargs) -> List[Dict]:

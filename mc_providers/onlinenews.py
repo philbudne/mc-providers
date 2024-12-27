@@ -22,17 +22,18 @@ logger = logging.getLogger(__name__)
 
 class OnlineNewsAbstractProvider(ContentProvider):
     """
-    All these endpoints accept a `domains: List[str]` keyword arg.
+    All these endpoints accept a `domains: List[str]` search keyword arg.
     """
-    
+
     MAX_QUERY_LENGTH = pow(2, 14)
     TOP_WORDS_THRESHOLD = 0.1
     DEBUG_WORDS = 0
+    BASE_URL = ""
 
-    def __init__(self, base_url: Optional[str], timeout: Optional[int] = None, caching: bool = True):
-        super().__init__(caching)
-        self._base_url = base_url
-        self._timeout = timeout
+    def __init__(self, **kwargs):
+        # base_url must be passed with keyword
+        self._base_url = kwargs.pop("base_url", None) or self.BASE_URL
+        super().__init__(**kwargs)
         self._client = self.get_client()
 
     def get_client(self):
@@ -374,8 +375,8 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
 
-    def __init__(self, base_url: Optional[str] = None, timeout: Optional[int] = None, caching: bool = True):
-        super().__init__(base_url, timeout, caching)  # will call get_client
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)  # will call get_client
 
     def get_client(self):
         client = SearchApiClient("mediacloud", self._base_url)
@@ -454,8 +455,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     DEFAULT_COLLECTION = os.environ.get(
         "ELASTICSEARCH_INDEX_NAME_PREFIX", "mc_search") + "-*"
 
-    def __init__(self, base_url=Optional[str], timeout: Optional[int] = None, caching: bool = True):
-        super().__init__(base_url, timeout, caching)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     def get_client(self):
         api_client = MCSearchApiClient(collection=self.DEFAULT_COLLECTION, api_base_url=self._base_url)
@@ -644,7 +645,6 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 # code dragged up from mediacloud.py and news-search-api.py
 #
 import base64
-import importlib.metadata       # for default opaque_id
 import json
 import os
 import time
@@ -660,14 +660,6 @@ from elasticsearch_dsl.query import FunctionScore, Match, QueryString
 from elasticsearch_dsl.utils import AttrDict
 
 from .language import terms_without_stopwords
-
-# from api-client/.../api.py
-try:
-    VERSION = "v" + importlib.metadata.version("mc-providers")
-except importlib.metadata.PackageNotFoundError:
-    VERSION = "dev"
-
-OPAQUE_ID = f"mc-providers {VERSION}"
 
 def _get(ad: AttrDict, key: str, default: Any = None) -> Any:
     """
@@ -755,10 +747,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     * web-search/mcweb/backend/search/utils.py (url_search_strings)
     * this file (domain search string)
     * mc-providers/mc_providers/mediacloud.py (date ranges)
-    * news-search-api/api.py
     * news-search-api/client.py (DSL, including aggegations)
     """
-    def __init__(self, *args, **kwargs):
+
+    def __init__(self, **kwargs):
+        # Profiling:
         # CAN pass string (filename) here, but feeding all the
         # resulting JSON files to es-tools/collapse-esperf.py for
         # flamegraphing could get you a mish-mash of different
@@ -768,6 +761,15 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         # total seconds from the last profiled query:
         self._last_es_seconds = -1.0
 
+        # after pop-ing any local-only args:
+        super().__init__(**kwargs)
+
+        eshosts = self._base_url.split(",") # comma separated list of http://SERVER:PORT
+
+        # Retries without delay (never mind backoff!)
+        # web-search creates new Provider for each API request,
+        # so randomize the pool.
+
         # https://www.elastic.co/guide/en/elasticsearch/reference/current/api-conventions.html
         # says:
         #   The X-Opaque-Id header accepts any arbitrary
@@ -776,31 +778,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         #   unique X-Opaque-Id header for every request. Too many
         #   unique X-Opaque-Id values can prevent Elasticsearch from
         #   deduplicating warnings in the deprecation logs.
-        # Which probaly REALLY means one string per client LIBRARY!
-        # See preference below.
-        opaque_id = kwargs.pop("client_id", None) # more generic public name
-        if not opaque_id:
-            opaque_id = OPAQUE_ID
+        # See session_id for per-user/instance identification.
 
-        # https://www.elastic.co/guide/en/elasticsearch/reference/7.17/search-search.html#search-preference
-        #   "Any string that does not start with _. If the cluster
-        #   state and selected shards do not change, searches using
-        #   the same <custom-string> value are routed to the same
-        #   shards in the same order.
-        # pass user-id and/or session id
-        self._preference = kwargs.pop("session_id", None)
-
-        # after pop-ing any local-only args:
-        super().__init__(*args, **kwargs)
-
-        eshosts = (self._base_url or "").split(",") # comma separated list of http://SERVER:PORT
-
-        # Retries without delay (never mind backoff!)
-        # web-search creates new Provider for each API request,
-        # so randomize the pool.
         self._es = elasticsearch.Elasticsearch(eshosts,
                                                max_retries=3,
-                                               opaque_id=opaque_id,
+                                               opaque_id=self._software_id,
                                                request_timeout=self._timeout,
                                                randomize_nodes_in_pool=True)
 
@@ -856,8 +838,14 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         s = Search(index=self._index_from_dates(start_date, end_date), using=self._es)\
             .query(QueryString(query=sq, default_field="text_content", default_operator="and"))
 
-        if self._preference:
-            s = s.params(preference=self._preference)
+        if self._session_id:
+            # https://www.elastic.co/guide/en/elasticsearch/reference/7.17/search-search.html#search-preference
+            #   "Any string that does not start with _. If the cluster
+            #   state and selected shards do not change, searches using
+            #   the same <custom-string> value are routed to the same
+            #   shards in the same order.
+            # pass user-id and/or session id
+            s = s.params(preference=self._session_id)
 
         # Evaluating selectors (domains/filters/url_search_strings) in "filter context";
         # Supposed to be faster, and enable caching of which documents to look at.

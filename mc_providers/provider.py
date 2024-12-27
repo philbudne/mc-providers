@@ -2,9 +2,11 @@ import logging
 from typing import List, Dict, Optional, Union
 import datetime as dt
 import datetime
+import importlib.metadata       # for SOFTWARE_ID
 from operator import itemgetter
 from abc import ABC
 import collections
+
 from .exceptions import QueryingEverythingUnsupportedQuery
 from .language import terms_without_stopwords
 
@@ -14,18 +16,50 @@ MC_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 DEFAULT_WORDS_SAMPLE = 500
 DEFAULT_LANGUAGE_SAMPLE = 1000
 
+DEFAULT_TIMEOUT = 60  # to be used across all the providers; override via one-time call to set_default_timeout
+
+# from api-client/.../api.py
+try:
+    VERSION = "v" + importlib.metadata.version("mc-providers")
+except importlib.metadata.PackageNotFoundError:
+    VERSION = "dev"
+
+
+def set_default_timeout(timeout: int):
+    global DEFAULT_TIMEOUT
+    DEFAULT_TIMEOUT = timeout
+
 
 class ContentProvider(ABC):
     """
     An abstract wrapper to be implemented for each platform we want to preview content from.
     Any unimplemented methods raise an Exception
     """
+    SOFTWARE_ID = f"mc-providers {VERSION}"
 
-    def __init__(self, caching: Optional[Union[bool,int]] = 1):
+    def __init__(self, **kwargs):
         self._logger = logging.getLogger(__name__)
-        if caching is None:
-            caching = 1
-        self._caching = caching # -1 means suppress caching in OUR provider!
+
+        self._timeout = kwargs.pop("timeout", DEFAULT_TIMEOUT)
+        if self._timeout is None:
+            self._timeout = DEFAULT_TIMEOUT
+        assert isinstance(self._timeout, (int, float))
+
+        # force bool to int.
+        # -1 means suppress caching in upstream software!
+        self._caching = int(kwargs.pop("caching", 1))
+
+        # identify user/session making request (for caching)
+        self._session_id = kwargs.pop("session_id", None)
+
+        # identify software making request
+        # (use in User-Agent strings!!)
+        self._software_id = kwargs.pop("software_id", self.SOFTWARE_ID)
+
+        if kwargs:
+            # complain about anything else to detect typos
+            unknown = ", ".join(kwargs.keys())
+            raise NotImplementedError(f"Unknown argument(s): {unknown}")
 
     def everything_query(self) -> str:
         raise QueryingEverythingUnsupportedQuery()
