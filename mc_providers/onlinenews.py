@@ -787,8 +787,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         #   state and selected shards do not change, searches using
         #   the same <custom-string> value are routed to the same
         #   shards in the same order.
-        # pass user-id or a session id
-        self._preference = kwargs.pop("preference", None)
+        # pass user-id and/or session id
+        self._preference = kwargs.pop("session_id", None)
 
         # after pop-ing any local-only args:
         super().__init__(*args, **kwargs)
