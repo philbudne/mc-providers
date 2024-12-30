@@ -152,15 +152,9 @@ class OnlineNewsAbstractProvider(ContentProvider):
                 continue
             if self.DEBUG_WORDS:
                 logger.debug("getting stop words for %s", lang)
-            try:
-                if len(lang) == 2:
-                    for word in stopwords_for_language(lang):
-                        stopwords.add(word)
-            except KeyboardInterrupt:
-                raise
-            except RuntimeError as e:
-                # explicitly raises RuntimeError if len(lang) != 2!!
-                logger.warning("error getting stop words for %s: %e", lang, e)
+            if len(lang) == 2:
+                # stopwords_for_language raises error of len(lang) != 2
+                stopwords.update(stopwords_for_language(lang))
 
         sample_size, results_counter = self._word_counts(query, start_date, end_date,
                                                          exclude=list(stopwords), **kwargs)
@@ -808,6 +802,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
         Do quoting done by _sanitize_es_query in mediacloud.py client library
         """
+        # quote slashes to avoid interpretation as /regexp/
         return fstr.replace("/", r"\/")
 
     def _fields(self, expanded) -> list[str]:
@@ -1246,21 +1241,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         full_text = bool(kwargs.pop("full_text", False)) # XXX TEMP?
 
-        search = self._basic_search(query, start_date, end_date, **kwargs)
-
         # https://github.com/elastic/elasticsearch-dsl-py/issues/1369
         # https://github.com/csinchok/django-bulbs/blob/1ba8f0c95502f952d01617188e947346959a7e30/bulbs/content/search.py#L2
-
-        search = search.query(
-            FunctionScore(
-                functions=[
-                    RandomScore(
-                        # needed for multi-page query?:
-                        # seed=int(time.time()), field="_seq_no"
-                    )
-                ]
-            )
-        )
 
         if full_text:
             # 3mo US-national query: 3.5s, processing: 28s
@@ -1269,19 +1251,28 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # 3mo US-national query: 1.5s, processing 0.6s
             text = "article_title"
 
-        search = search.source([text, "language"])
-        search = search.extra(size=self.RANDOM_STORY_WORDS_SAMPLES)
+        search = self._basic_search(query, start_date, end_date, **kwargs)\
+                     .query(
+                         FunctionScore(
+                             functions=[
+                                 RandomScore(
+                                     # needed for multi-page query?:
+                                     # seed=int(time.time()), field="_seq_no"
+                                 )
+                             ]
+                         )
+                     )\
+                     .source([text, "language"])\
+                     .extra(size=self.RANDOM_STORY_WORDS_SAMPLES)
 
         search_results = self._search(search)
         hits = _get_hits(search_results)
         if not hits:
             return []
 
-        # cribbed from ContentProvider._sampled_title_words
-
         sampled_count = 0
         counts: Counter[str] = Counter()
-        #indices = Counter()
+        #indices = Counter()  # to see distribution
         t0 = time.monotonic()
         for hit in hits:
             #indices[hit._index] += 1
@@ -1289,11 +1280,14 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             sampled_count += 1
             counts.update(terms_without_stopwords(src["language"], src[text]))
 
-        #print(indices)
-        # clean up results
+        # normalize and format results
         results = [{"term": w, "count": c, "ratio": c/sampled_count}
                    for w, c in counts.most_common(limit)]
-        logger.info("_random_story_words processing time %.3f ms", (time.monotonic() - t0) * 1000)
+
+        if self.DEBUG_WORDS:
+            # majority of time spent processing when processing full text!!!
+            logger.info("_random_story_words processing time %.3f ms", (time.monotonic() - t0) * 1000)
+
         return results
 
     # comment out to revert to ES aggregation based version:
