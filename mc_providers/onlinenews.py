@@ -866,7 +866,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             filters.append((len(selector_clauses) * self.SOURCE_WEIGHT,
                             lambda s : s.filter(QueryString(query=sqs))))
 
-        filters.sort()          # smallest weight first
+        # try applying more selective queries first
+        filters.sort()
         for weight, func in filters:
             s = func(s)
 
