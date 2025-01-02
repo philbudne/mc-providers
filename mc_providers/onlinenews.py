@@ -853,7 +853,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         # Apply filter with the smallest result set first.
         # could include languages etc here
 
-        filters : list[tuple[int, Callable]] = [
+        filters : list[tuple[int, Callable[[Search], Search]]] = [
             ((end_date - start_date).days * self.DAY_WEIGHT,
              lambda s : s.filter("range", publication_date={'gte': start, "lte": end}))
         ]
