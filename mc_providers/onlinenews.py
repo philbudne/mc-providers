@@ -296,14 +296,6 @@ class OnlineNewsAbstractProvider(ContentProvider):
         cls._prune_kwargs(kwargs)
         return queries
 
-    @staticmethod
-    def _sanitize_query(fstr: str) -> str:
-        """
-        noop: (/ quoting done in mediacloud.py sanitize_query),
-        presumably waybacknews also does??
-        """
-        return fstr
-
     @classmethod
     def _selector_query_clauses(cls, kwargs: dict) -> list[str]:
         """
@@ -323,10 +315,9 @@ class OnlineNewsAbstractProvider(ContentProvider):
         filters = kwargs.get('filters', [])
         if len(filters) > 0:
             for filter in filters:
-                f = cls._sanitize_query(filter)
                 if "AND" in f:
                     # parenthesize if any chance it has a grabby AND.
-                    selector_clauses.append(f"({f})")
+                    selector_clauses.append(f"({filter})")
                 else:
                     selector_clauses.append(f)
         logger.debug("AP._selector_query_clauses OUT: %s", selector_clauses)
@@ -524,8 +515,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
                     mfuss = match_formatted_search_strings(fuss)
                     selector_clauses.append(
-                        cls._sanitize_query(
-                            f"({domain_field}:{cdom} AND {mfuss})"))
+                        f"({domain_field}:{cdom} AND {mfuss})")
 
                     format_and_append_uss(cdom, fuss)
             else: # make query without domain (name) field check
@@ -537,8 +527,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
                 # check all the urls in one swell foop!
                 selector_clauses.append(
-                    cls._sanitize_query(
-                        match_formatted_search_strings(fuss)))
+                        match_formatted_search_strings(fuss))
 
         logger.debug("MC._selector_query_clauses OUT: %s", selector_clauses)
         return selector_clauses
@@ -658,6 +647,16 @@ from elasticsearch_dsl.query import FunctionScore, Match, QueryString
 from elasticsearch_dsl.utils import AttrDict
 
 from .language import terms_without_stopwords
+
+class SanitizedQueryString(QueryString):
+    """
+    query string (expression) with quoting
+    done by _sanitize_es_query in mediacloud.py client library
+    """
+    def __init__(self, query: str, **kwargs):
+        # quote slashes to avoid interpretation as /regexp/
+        sqs =  query.replace("/", r"\/")
+        super().__init__(query=sqs, **kwargs)
 
 def _get(ad: AttrDict, key: str, default: Any = None) -> Any:
     """
@@ -826,16 +825,12 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         from news-search-api/api.py cs_basic_query
         create a elasticsearch_dsl query from user_query date range and kwargs
         """
-        # only sanitize user query
-        sq = self._sanitize_query(user_query)
-        logger.debug("_basic_query %s sanitize %s", user_query, sq)
-
         # works for date or datetime!
         start = start_date.strftime("%Y-%m-%dT00:00:00Z") # paranoia
         end = end_date.strftime("%Y-%m-%d") # T23:59:59:999_999_999Z implied?
 
         s = Search(index=self._index_from_dates(start_date, end_date), using=self._es)\
-            .query(QueryString(query=sq, default_field="text_content", default_operator="and"))
+            .query(SanitizedQueryString(query=user_query, default_field="text_content", default_operator="and"))
 
         if self._session_id:
             # https://www.elastic.co/guide/en/elasticsearch/reference/7.17/search-search.html#search-preference
@@ -864,7 +859,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # only to have ES have to parse it??
             sqs = self._selector_query_string_from_clauses(selector_clauses)
             filters.append((len(selector_clauses) * self.SOURCE_WEIGHT,
-                            lambda s : s.filter(QueryString(query=sqs))))
+                            lambda s : s.filter(SanitizedQueryString(query=sqs))))
 
         # try applying more selective queries first
         filters.sort()
