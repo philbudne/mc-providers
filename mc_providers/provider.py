@@ -25,7 +25,7 @@ except importlib.metadata.PackageNotFoundError:
     VERSION = "dev"
 
 
-def set_default_timeout(timeout: int):
+def set_default_timeout(timeout: int) -> None:
     global DEFAULT_TIMEOUT
     DEFAULT_TIMEOUT = timeout
 

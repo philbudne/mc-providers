@@ -40,7 +40,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         raise NotImplementedError("Abstract provider class should not be implemented directly")
 
     @classmethod
-    def domain_search_string(cls):
+    def domain_search_string(cls) -> str:
         raise NotImplementedError("Abstract provider class should not be implemented directly")
 
     def everything_query(self) -> str:
@@ -802,7 +802,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         # quote slashes to avoid interpretation as /regexp/
         return fstr.replace("/", r"\/")
 
-    def _fields(self, expanded) -> list[str]:
+    def _fields(self, expanded: bool) -> list[str]:
         """
         from news-search-api/client.py QueryBuilder constructor
         """
