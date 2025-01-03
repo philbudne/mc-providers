@@ -648,15 +648,20 @@ from elasticsearch_dsl.utils import AttrDict
 
 from .language import terms_without_stopwords
 
+def _sanitize(s: str) -> str:
+    """
+    quote slashes to avoid interpretation as /regexp/
+    as done by _sanitize_es_query in mediacloud.py client library
+    """
+    return s.replace("/", r"\/")
+
 class SanitizedQueryString(QueryString):
     """
     query string (expression) with quoting
-    done by _sanitize_es_query in mediacloud.py client library
     """
     def __init__(self, query: str, **kwargs):
-        # quote slashes to avoid interpretation as /regexp/
-        sqs =  query.replace("/", r"\/")
-        super().__init__(query=sqs, **kwargs)
+        super().__init__(query=_sanitize(query), **kwargs)
+
 
 def _get(ad: AttrDict, key: str, default: Any = None) -> Any:
     """
@@ -723,13 +728,13 @@ def _get_hits(res: Response) -> list[AttrDict]:
     # `self._shards.total == self._shards.successful and not self.timed_out`
     # _search method will have already logged any failed shards.
     if not res.success():
-        logger.warn("res.success() is False!")
+        logger.warn("res.success() is False!") # XXX raise an Exception???
         return []
 
     try:
         return res.hits.hits
     except AttributeError:
-        logger.warn("res.hits.hits failed!")
+        logger.warn("res.hits.hits failed!") # XXX raise an Exception?
         return []
 
 _ES_MAXPAGE = 1000
@@ -1123,7 +1128,6 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
         called by OnlineNewsAbstractProvider.words.
         NOTE! Not using stopwords (we've asked ES to exclude them)
-        XXX SHOULD BE TESTED!!!
         """
         return [dict(term=t.lower(), count=c, ratio=c/sample_size)
                 for t, c in results_counter.items()]
