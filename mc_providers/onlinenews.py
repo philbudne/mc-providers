@@ -315,11 +315,11 @@ class OnlineNewsAbstractProvider(ContentProvider):
         filters = kwargs.get('filters', [])
         if len(filters) > 0:
             for filter in filters:
-                if "AND" in f:
+                if "AND" in filter:
                     # parenthesize if any chance it has a grabby AND.
                     selector_clauses.append(f"({filter})")
                 else:
-                    selector_clauses.append(f)
+                    selector_clauses.append(filter)
         logger.debug("AP._selector_query_clauses OUT: %s", selector_clauses)
         return selector_clauses
 
@@ -663,28 +663,21 @@ class SanitizedQueryString(QueryString):
         super().__init__(query=_sanitize(query), **kwargs)
 
 
-def _get(ad: AttrDict, key: str, default: Any = None) -> Any:
-    """
-    AttrDict doesn't have a "get" method; hide that here to make it
-    easy to switch back to _search returning res.to_dict() if needed...
-    """
-    return getattr(ad, key, default)
-
 def _format_match(hit: AttrDict, expanded: bool = False) -> dict:
     src = hit["_source"]
     res = {
-        "article_title": _get(src, "article_title"),
-        "publication_date": _get(src, "publication_date", "")[:10] or None,
-        "indexed_date": _get(src, "indexed_date", None),
-        "language": _get(src, "language", None),
-        "full_langauge": _get(src, "full_language", None),
-        "url": _get(src, "url", None),
-        "original_url": _get(src, "original_url", None),
-        "canonical_domain": _get(src, "canonical_domain", None),
+        "article_title": getattr(src, "article_title", None),
+        "publication_date": getattr(src, "publication_date", "")[:10] or None,
+        "indexed_date": getattr(src, "indexed_date", None),
+        "language": getattr(src, "language", None),
+        "full_langauge": getattr(src, "full_language", None),
+        "url": getattr(src, "url", None),
+        "original_url": getattr(src, "original_url", None),
+        "canonical_domain": getattr(src, "canonical_domain", None),
         "id": hit["_id"]        # PB: was re-hash of url!
     }
     if expanded:
-        res["text_content"] = _get(src, "text_content")
+        res["text_content"] = getattr(src, "text_content", None)
     return res
 
 def _format_day_counts(bucket: list) -> dict[str, int]:
@@ -761,7 +754,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         self._profile = kwargs.pop("profile", False)
 
         # total seconds from the last profiled query:
-        self._last_es_seconds = -1.0
+        self._last_elastic_ms = -1.0
 
         # after pop-ing any local-only args:
         super().__init__(**kwargs)
@@ -915,12 +908,13 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         res = search.execute()
         elapsed = time.monotonic() - t0
-        logger.info("MC._search ES time %s ms (%.3f elapsed)", _get(res, "took", -1), elapsed*1000)
+        logger.info("MC._search ES time %s ms (%.3f elapsed)",
+                    getattr(res, "took", -1), elapsed*1000)
 
-        if profile and (pdata := _get(res, "profile")):
-            self._profile_data(pdata, profile)
+        if profile and (pdata := getattr(res, "profile", {})):
+            self._process_profile_data(pdata, profile)
 
-        try:                    # look for circuit breaker trips
+        try:                    # look for circuit breaker trips, etc
             # Response.success() wants success
             # self._shards.total == self._shards.successful and not self.timed_out
             # but we can't be choosey right now because of top words (mis)behavior
@@ -937,20 +931,22 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                         rt = shard.reason.type
                         if rt:
                             reasons[rt] += 1
-                    logger.info("MC._search %d/%d shards failed; reasons: %r", failed, total, dict(reasons))
+                    logger.info("MC._search %d/%d shards failed; reasons: %r",
+                                failed, total, dict(reasons))
         except (ValueError, KeyError) as e:
             logger.debug("error looking at results: %r", e)
+            # XXX raise Exception here??
         return res
 
-    def _profile_data(self, pdata, profile: str | bool) -> None:
+    def _process_profile_data(self, pdata: AttrDict, profile: str | bool) -> None:
         """
         digest profiling data
         """
-        if isinstance(profile, str):
+        if isinstance(profile, str): # filename prefix?
             fname = time.strftime(f"{profile}-%Y-%m-%d-%H-%M-%S.json")
             with open(fname, "w") as f:
                 json.dump(pdata.to_dict(), f)
-            logger.debug("wrote profiling data to %s", fname)
+            logger.info("wrote profiling data to %s", fname)
 
         # sum up ES internal times
         query_ns = rewrite_ns = coll_ns = agg_ns = 0
@@ -965,13 +961,14 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             for agg in shard.aggregations:
                 agg_ns += agg.time_in_nanos
         es_nanos = query_ns + rewrite_ns + coll_ns + agg_ns
-        self._last_es_seconds = es_nanos / 1e9
+        self._last_elastic_ms = es_nanos / 1e6 # convert ns to ms
         # XXX save components???
-        # XXX sum over Provider lifetime??
 
-        # avoid floating point divisions that may not be displayed:
-        logger.info("ES time: %.6f sec (ns: query: %d rewrite: %d collectors: %d aggs: %d)",
-                     self._last_es_seconds, query_ns, rewrite_ns, coll_ns, agg_ns)
+        logger.info("ES time: %.3f ms", self._last_elastic_ms)
+
+        # avoid floating point divisions that are likely not displayed:
+        logger.debug(" ES (ns) query: %d rewrite: %d, collectors: %d aggs: %d",
+                     query_ns, rewrite_ns, coll_ns, agg_ns)
 
     @CachingManager.cache('overview')
     def _overview_query(self, q: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> dict:
