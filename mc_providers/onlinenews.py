@@ -643,7 +643,7 @@ from elasticsearch_dsl import Search, Response
 from elasticsearch_dsl.aggs import RareTerms, Sampler, SignificantTerms, SignificantText, Terms
 from elasticsearch_dsl.function import RandomScore
 from elasticsearch_dsl.query import FunctionScore, Match, QueryString
-#from elasticsearch_dsl.types import FieldSort, SortOptions # not in 8.15
+#from elasticsearch_dsl.types import FunctionScoreContainer, SortOptions # not in 8.15
 from elasticsearch_dsl.utils import AttrDict
 
 from .language import terms_without_stopwords
@@ -911,7 +911,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         logger.info("MC._search ES time %s ms (%.3f elapsed)",
                     getattr(res, "took", -1), elapsed*1000)
 
-        if profile and (pdata := getattr(res, "profile", {})):
+        if profile and (pdata := getattr(res, "profile", None)):
             self._process_profile_data(pdata, profile)
 
         try:                    # look for circuit breaker trips, etc
@@ -1234,27 +1234,27 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                             query: str,
                             start_date: dt.datetime, end_date: dt.datetime,
                             limit: int = 100, # number of top words to return
-                            **kwargs):
+                            **kwargs) -> list[dict]:
 
-        full_text = bool(kwargs.pop("full_text", False)) # XXX TEMP?
+        full_text = bool(kwargs.pop("full_text", True)) # XXX TEMP?
+
+        if full_text:
+            # 6mo NYT query: <2s
+            # processing: ~2m w/ stopword lists, ~7s w/ stopword sets!
+            text = "text_content"
+        else:
+            text = "article_title"
 
         # https://github.com/elastic/elasticsearch-dsl-py/issues/1369
         # https://github.com/csinchok/django-bulbs/blob/1ba8f0c95502f952d01617188e947346959a7e30/bulbs/content/search.py#L2
-
-        if full_text:
-            # 3mo US-national query: 3.5s, processing: 28s
-            text = "text_content"
-        else:
-            # 3mo US-national query: 1.5s, processing 0.6s
-            text = "article_title"
 
         search = self._basic_search(query, start_date, end_date, **kwargs)\
                      .query(
                          FunctionScore(
                              functions=[
                                  RandomScore(
-                                     # needed for multi-page query?:
-                                     # seed=int(time.time()), field="_seq_no"
+                                     # needed for multi-page query:
+                                     # seed=int, field="_seq_no"
                                  )
                              ]
                          )

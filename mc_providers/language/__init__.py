@@ -38,7 +38,7 @@ def top_detected(text: str) -> str:
     return guesses[0][0][0].replace('__label__', '')
 
 
-def stopwords_for_language(lang_code: str) -> List:
+def stopwords_for_language(lang_code: str) -> set:
     # manage the _stopwords_by_language dict, from alpha2 to list
     if len(lang_code) != 2:
         raise RuntimeError('Invalid language "{}" - use 2 letter alpha code'.format(lang_code))
@@ -46,11 +46,11 @@ def stopwords_for_language(lang_code: str) -> List:
         file_path = os.path.join(this_dir, '{}_stop_words.txt'.format(lang_code))
         if not os.path.exists(file_path):
             logger.info('Language "{}" has no stopwords list, accepting all terms'.format(lang_code))
-            return []
+            return set()
         with open(file_path) as f:
             lines = f.read().splitlines()
-            _stopwords_by_language[lang_code] = [line.strip() for line in lines
-                                                 if not line.startswith('#') and len(line) > 0]
+            _stopwords_by_language[lang_code] = set(line.strip() for line in lines
+                                                 if not line.startswith('#') and len(line) > 0)
     return _stopwords_by_language[lang_code]
 
 
