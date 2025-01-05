@@ -802,14 +802,6 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         # Elasticsearch object.
         return None
 
-    @staticmethod
-    def _sanitize_query(fstr: str) -> str:
-        """
-        Do quoting done by _sanitize_es_query in mediacloud.py client library
-        """
-        # quote slashes to avoid interpretation as /regexp/
-        return fstr.replace("/", r"\/")
-
     def _fields(self, expanded: bool) -> list[str]:
         """
         from news-search-api/client.py QueryBuilder constructor
