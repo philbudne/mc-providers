@@ -622,8 +622,9 @@ from typing import Callable, Generator
 import elasticsearch
 import mcmetadata.urls as urls
 from elasticsearch_dsl import Search, Response
+from elasticsearch_dsl.document_base import InstrumentedField
 from elasticsearch_dsl.function import RandomScore
-from elasticsearch_dsl.query import FunctionScore, Match, QueryString
+from elasticsearch_dsl.query import FunctionScore, Match, Range, Query, QueryString
 #from elasticsearch_dsl.types import FunctionScoreContainer, SortOptions # not in 8.15
 from elasticsearch_dsl.utils import AttrDict
 
@@ -713,6 +714,9 @@ def _get_hits(res: Response) -> list[AttrDict]:
 
 _ES_MAXPAGE = 1000
 
+Field = str | InstrumentedField # quiet mypy complaints
+FilterTuple = tuple[int, Query | None]
+
 class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     """
     version of MC Provider going direct to ES.
@@ -782,7 +786,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
         return None
 
-    def _fields(self, expanded: bool) -> list[str]:
+    def _fields(self, expanded: bool) -> list[Field]:
         """
         from news-search-api/client.py QueryBuilder constructor:
         return list of fields for item, paged_items, all_items to return
@@ -791,8 +795,10 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         with only millisecond resolution, while the stored string usually
         has microsecond resolution.
         """
-        fields = ["article_title", "publication_date", "indexed_date",
-                  "language", "full_language", "canonical_domain", "url", "original_url"]
+        fields: list[Field] = [
+            "article_title", "publication_date", "indexed_date",
+            "language", "full_language", "canonical_domain", "url", "original_url"
+        ]
         if expanded:
             fields.append("text_content")
         return fields
@@ -802,6 +808,19 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     # In reality, weight ratio is source/domain specific!
     SOURCE_WEIGHT = 1
     DAY_WEIGHT = 25
+
+    @classmethod
+    def _selector_filter_tuple(cls, kwargs: dict) -> FilterTuple:
+        # Maybe someday construct DSL (Match | Match ....) rather than
+        # resorting to string we format only to have ES have to parse
+        # it??  Should initially take temp kwarg to allow A/B testing!!!
+        selector_clauses = cls._selector_query_clauses(kwargs)
+        if selector_clauses:
+            sqs = cls._selector_query_string_from_clauses(selector_clauses)
+            return (len(selector_clauses) * cls.SOURCE_WEIGHT,
+                    SanitizedQueryString(query=sqs))
+        else:
+            return (0, None)
 
     def _basic_search(self, user_query: str, start_date: dt.datetime, end_date: dt.datetime,
                      expanded: bool = False, source: bool = True, **kwargs: Any) -> Search:
@@ -833,24 +852,17 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         # to cut down document set as soon as possible.
         # could include languages (etc) here
 
-        filters : list[tuple[int, Callable[[Search], Search]]] = [
-            ((end_date - start_date).days * self.DAY_WEIGHT,
-             lambda s : s.filter("range", publication_date={'gte': start, "lte": end}))
+        days = (end_date - start_date).days + 1
+        filters : list[FilterTuple] = [
+            (days * self.DAY_WEIGHT, Range(publication_date={'gte': start, "lte": end})),
+            self._selector_filter_tuple(kwargs)
         ]
-
-        selector_clauses = self._selector_query_clauses(kwargs)
-        if selector_clauses:
-            # Maybe someday construct DSL rather than resorting to string we format
-            # only to have ES have to parse it??  Replace func with a Query to pass
-            # to s.filter??
-            sqs = self._selector_query_string_from_clauses(selector_clauses)
-            filters.append((len(selector_clauses) * self.SOURCE_WEIGHT,
-                            lambda s : s.filter(SanitizedQueryString(query=sqs))))
 
         # try applying more selective queries (fewer results) first
         filters.sort()
-        for weight, func in filters:
-            s = func(s)
+        for weight, query in filters:
+            if query:
+                s = s.filter(query)
 
         if source:              # return source (fields)?
             return s.source(self._fields(expanded))
