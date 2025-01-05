@@ -287,6 +287,14 @@ class OnlineNewsAbstractProvider(ContentProvider):
         kwargs.pop("url_search_string_domain", None) # TEMP
 
     @classmethod
+    def _check_kwargs(cls, kwargs: dict[str, Any]) -> None:
+        kwcopy = kwargs.copy()
+        cls._prune_kwargs(kwcopy)
+        if kwcopy:
+            exstring = ", ".join(kwcopy) # join key names
+            raise TypeError(f"unknown keyword args: {exstring}")
+
+    @classmethod
     def _assemble_and_chunk_query_str_kw(cls, base_query: str, kwargs: dict = {}):
         """
         takes kwargs as *dict*, removes items that shouldn't be sent to _client
@@ -821,7 +829,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                      expanded: bool = False, source: bool = True, **kwargs) -> Search:
         """
         from news-search-api/api.py cs_basic_query
-        create a elasticsearch_dsl query from user_query date range and kwargs
+        create a elasticsearch_dsl query from user_query, date range, and kwargs
         """
         # works for date or datetime!
         start = start_date.strftime("%Y-%m-%dT00:00:00Z") # paranoia
@@ -859,17 +867,17 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             filters.append((len(selector_clauses) * self.SOURCE_WEIGHT,
                             lambda s : s.filter(SanitizedQueryString(query=sqs))))
 
-        # try applying more selective queries first
+        # try applying more selective queries (fewer results) first
         filters.sort()
         for weight, func in filters:
             s = func(s)
 
-        if source:              # return source?
+        if source:              # return source (fields)?
             return s.source(self._fields(expanded))
         else:
             return s.source(False) # no source fields in hits
 
-    def _is_no_results(self, results) -> bool:
+    def _is_no_results(self, results: Dict) -> bool:
         """
         used to test _overview_query results
         """
@@ -986,6 +994,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         AGG_DOMAIN = "topdomains"
 
         profile = kwargs.pop("profile", None)
+        self._check_kwargs(kwargs)
 
         search = self._basic_search(q, start_date, end_date, **kwargs)
         search.aggs.bucket(AGG_DAILY, "date_histogram", field="publication_date",
@@ -1017,6 +1026,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         sampler_name = "sample"
 
         profile = kwargs.pop("profile", None)
+        self._check_kwargs(kwargs)
         search = self._basic_search(query, start_date, end_date, source=False, **kwargs)
         if aggr == "top":
             # To get more accurate results, the terms agg fetches more
@@ -1171,11 +1181,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             raise ValueError(page_sort_order)
 
         profile = kwargs.pop("profile", None)
-        kwcopy = kwargs.copy()
-        self._prune_kwargs(kwcopy)
-        if kwcopy:
-            exstring = ", ".join(kwcopy) # join key names
-            raise TypeError(f"unknown keyword args: {exstring}")
+        self._check_kwargs(kwargs)
 
         # XXX types.SortOptions (not in 8.15.4)
         sort_opts = {page_sort_field: page_sort_order}
@@ -1237,10 +1243,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                             **kwargs) -> list[dict]:
 
         full_text = bool(kwargs.pop("full_text", True)) # XXX TEMP?
+        remove_punctuation = bool(kwargs.pop("remove_punctuation", True)) # XXX TEMP?
+        profile = kwargs.pop("profile", None)
+        self._check_kwargs(kwargs)
 
         if full_text:
-            # 6mo NYT query: <2s
-            # processing: ~2m w/ stopword lists, ~7s w/ stopword sets!
             text = "text_content"
         else:
             text = "article_title"
@@ -1248,13 +1255,14 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         # https://github.com/elastic/elasticsearch-dsl-py/issues/1369
         # https://github.com/csinchok/django-bulbs/blob/1ba8f0c95502f952d01617188e947346959a7e30/bulbs/content/search.py#L2
 
+        # elasticsearch_dsl v8.17 gives mypy error:
         search = self._basic_search(query, start_date, end_date, **kwargs)\
                      .query(
                          FunctionScore(
                              functions=[
                                  RandomScore(
-                                     # needed for multi-page query:
-                                     # seed=int, field="_seq_no"
+                                     # needed for 100% reproducibility:
+                                     # seed=int, field="fieldname"
                                  )
                              ]
                          )
@@ -1262,28 +1270,25 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                      .source([text, "language"])\
                      .extra(size=self.RANDOM_STORY_WORDS_SAMPLES)
 
-        search_results = self._search(search)
+        search_results = self._search(search, profile=profile)
         hits = _get_hits(search_results)
         if not hits:
             return []
 
         sampled_count = 0
         counts: Counter[str] = Counter()
-        #indices = Counter()  # to see distribution
         t0 = time.monotonic()
         for hit in hits:
-            #indices[hit._index] += 1
             src = hit["_source"]
             sampled_count += 1
-            counts.update(terms_without_stopwords(src["language"], src[text]))
+            counts.update(terms_without_stopwords(src["language"], src[text], remove_punctuation))
 
         # normalize and format results
         results = [{"term": w, "count": c, "ratio": c/sampled_count}
                    for w, c in counts.most_common(limit)]
 
-        if self.DEBUG_WORDS:
-            # majority of time spent processing when processing full text!!!
-            logger.info("_random_story_words processing time %.3f ms", (time.monotonic() - t0) * 1000)
+        # majority of time spent processing when processing full text!!!
+        logger.info("_random_story_words processing time %.3f ms", (time.monotonic() - t0) * 1000)
 
         return results
 

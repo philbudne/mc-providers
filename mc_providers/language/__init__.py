@@ -1,6 +1,7 @@
 import fasttext
 from typing import List
 import os
+import re
 import logging
 
 logger = logging.getLogger(__name__)
@@ -53,14 +54,18 @@ def stopwords_for_language(lang_code: str) -> set:
                                                  if not line.startswith('#') and len(line) > 0)
     return _stopwords_by_language[lang_code]
 
+# match non-word and non-space characters
+REMOVE = re.compile(r'[^\w\s]')
 
-def terms_without_stopwords(lang_code: str, text: str) -> List[str]:
+def terms_without_stopwords(lang_code: str, text: str, remove_punctuation: bool = True) -> List[str]:
     try:
         lang_stopwords = stopwords_for_language(lang_code)
     except RuntimeError:
         # no stopwords for this language, so just let them all through
         logger.info(f"No stopwords for {lang_code}")
         lang_stopwords = []
+    if remove_punctuation:
+        text = REMOVE.sub('', text)
     terms = text.split()
     ok_terms = [w.lower() for w in terms if w.lower() not in lang_stopwords]
     return ok_terms
