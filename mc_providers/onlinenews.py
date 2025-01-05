@@ -610,7 +610,7 @@ import base64
 import json
 import os
 import time
-from typing import Callable
+from typing import Callable, Generator
 
 import elasticsearch
 import mcmetadata.urls as urls
@@ -1053,7 +1053,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
     def all_items(self, query: str,
                   start_date: dt.datetime, end_date: dt.datetime,
-                  page_size: int = _ES_MAXPAGE, **kwargs: Any):
+                  page_size: int = _ES_MAXPAGE, **kwargs: Any) -> Generator[list[dict], None, None]:
         """
         returns generator of pages (lists) of items
         """
