@@ -625,6 +625,7 @@ from elasticsearch_dsl import Search, Response
 from elasticsearch_dsl.document_base import InstrumentedField
 from elasticsearch_dsl.function import RandomScore
 from elasticsearch_dsl.query import FunctionScore, Match, Range, Query, QueryString
+from elasticsearch_dsl.response import Hit
 #from elasticsearch_dsl.types import FunctionScoreContainer, SortOptions # not in 8.15
 from elasticsearch_dsl.utils import AttrDict
 
@@ -645,21 +646,20 @@ class SanitizedQueryString(QueryString):
         super().__init__(query=_sanitize(query), **kwargs)
 
 
-def _format_match(hit: AttrDict, expanded: bool = False) -> dict:
-    src = hit["_source"]
+def _format_match(hit: Hit, expanded: bool = False) -> dict:
     res = {
-        "article_title": getattr(src, "article_title", None),
-        "publication_date": getattr(src, "publication_date", "")[:10] or None,
-        "indexed_date": getattr(src, "indexed_date", None),
-        "language": getattr(src, "language", None),
-        "full_langauge": getattr(src, "full_language", None),
-        "url": getattr(src, "url", None),
-        "original_url": getattr(src, "original_url", None),
-        "canonical_domain": getattr(src, "canonical_domain", None),
-        "id": hit["_id"]        # PB: was re-hash of url!
+        "article_title": getattr(hit, "article_title", None),
+        "publication_date": getattr(hit, "publication_date", "")[:10] or None,
+        "indexed_date": getattr(hit, "indexed_date", None),
+        "language": getattr(hit, "language", None),
+        "full_langauge": getattr(hit, "full_language", None),
+        "url": getattr(hit, "url", None),
+        "original_url": getattr(hit, "original_url", None),
+        "canonical_domain": getattr(hit, "canonical_domain", None),
+        "id": hit.meta.id        # PB: was re-hash of url!
     }
     if expanded:
-        res["text_content"] = getattr(src, "text_content", None)
+        res["text_content"] = getattr(hit, "text_content", None)
     return res
 
 def _format_day_counts(bucket: list) -> dict[str, int]:
@@ -694,10 +694,10 @@ def _b64_encode_page_token(strng: str) -> str:
 def _b64_decode_page_token(strng: str) -> str:
     return base64.b64decode(strng.replace("~", "=").encode(), b"-_").decode()
 
-def _get_hits(res: Response) -> list[AttrDict]:
+def _get_hits(res: Response) -> list[Hit]:
     """
-    retrieve hits array from _search results
-    here to check Response in MOST cases
+    retrieve hits array from _search results.
+    currently called after all _search() calls
     """
     # Response.success() wants
     # `self._shards.total == self._shards.successful and not self.timed_out`
@@ -707,9 +707,9 @@ def _get_hits(res: Response) -> list[AttrDict]:
         return []
 
     try:
-        return res.hits.hits
+        return res.hits
     except AttributeError:
-        logger.warn("res.hits.hits failed!") # XXX raise an Exception?
+        logger.warn("res.hits failed!") # XXX raise an Exception?
         return []
 
 _ES_MAXPAGE = 1000
@@ -1000,10 +1000,14 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         if not hits:
             return {}           # checked by _is_no_results
 
-        aggs = res["aggregations"]
+        aggs = res.aggregations
+
+        # res.hits.total.value documented, but mypy complains
+        total = res["hits"]["total"]["value"]
+
         return {
             "query": q,
-            "total": res["hits"]["total"]["value"],
+            "total": total,
             "topdomains": _format_counts(aggs[AGG_DOMAIN]["buckets"]),
             "toplangs": _format_counts(aggs[AGG_LANG]["buckets"]),
             "dailycounts": _format_day_counts(aggs[AGG_DAILY]["buckets"]),
@@ -1150,15 +1154,14 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         counts: Counter[str] = Counter()
         t0 = time.monotonic()
         for hit in hits:
-            src = hit["_source"]
             sampled_count += 1
-            counts.update(terms_without_stopwords(src["language"], src[text_field], remove_punctuation))
+            counts.update(terms_without_stopwords(hit["language"], hit[text_field], remove_punctuation))
 
         # normalize and format results
         results = [{"term": w, "count": c, "ratio": c/sampled_count}
                    for w, c in counts.most_common(limit)]
 
         # majority of time spent processing when processing full text!!!
-        logger.info("_random_story_words processing time %.3f ms", (time.monotonic() - t0) * 1000)
+        logger.info("ES.words processing time %.3f ms", (time.monotonic() - t0) * 1000)
 
         return results
