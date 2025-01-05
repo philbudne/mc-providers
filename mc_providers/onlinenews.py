@@ -362,7 +362,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     def _match_to_row(cls, match: Dict) -> Dict:
         raise NotImplementedError()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         # important to keep this unique among platforms so that the caching works right
         return "OnlineNewsAbstractProvider"
 
@@ -382,7 +382,7 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
         return client
 
     @classmethod
-    def domain_search_string(cls):
+    def domain_search_string(cls) -> str:
         return "domain"
 
     @classmethod
@@ -403,7 +403,7 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
             'article_url': match['article_url'],
         }
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         # important to keep this unique among platforms so that the caching works right
         return "OnlineNewsWaybackMachineProvider"
 
@@ -462,7 +462,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return api_client
 
     @classmethod
-    def domain_search_string(cls):
+    def domain_search_string(cls) -> str:
         return "canonical_domain"
 
     @classmethod
@@ -485,7 +485,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             story_info['text'] = match['text_content']
         return story_info
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return "OnlineNewsMediaCloudProvider"
 
     def _is_no_results(self, results) -> bool:
@@ -1248,9 +1248,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         self._check_kwargs(kwargs)
 
         if full_text:
-            text = "text_content"
+            text_field = "text_content"
         else:
-            text = "article_title"
+            text_field = "article_title"
 
         # https://github.com/elastic/elasticsearch-dsl-py/issues/1369
         # https://github.com/csinchok/django-bulbs/blob/1ba8f0c95502f952d01617188e947346959a7e30/bulbs/content/search.py#L2
@@ -1267,7 +1267,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                              ]
                          )
                      )\
-                     .source([text, "language"])\
+                     .source([text_field, "language"])\
                      .extra(size=self.RANDOM_STORY_WORDS_SAMPLES)
 
         search_results = self._search(search, profile=profile)
@@ -1281,7 +1281,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         for hit in hits:
             src = hit["_source"]
             sampled_count += 1
-            counts.update(terms_without_stopwords(src["language"], src[text], remove_punctuation))
+            counts.update(terms_without_stopwords(src["language"], src[text_field], remove_punctuation))
 
         # normalize and format results
         results = [{"term": w, "count": c, "ratio": c/sampled_count}
