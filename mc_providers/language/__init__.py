@@ -55,7 +55,7 @@ def stopwords_for_language(lang_code: str) -> set:
     return _stopwords_by_language[lang_code]
 
 # match non-word and non-space characters
-REMOVE = re.compile(r'[^\w\s]')
+PUNCTUATION_RE = re.compile(r'[^\w\s]')
 
 def terms_without_stopwords(lang_code: str, text: str, remove_punctuation: bool = True) -> List[str]:
     try:
@@ -65,7 +65,7 @@ def terms_without_stopwords(lang_code: str, text: str, remove_punctuation: bool 
         logger.info(f"No stopwords for {lang_code}")
         lang_stopwords = []
     if remove_punctuation:
-        text = REMOVE.sub('', text)
+        text = PUNCTUATION_RE.sub('', text)
     terms = text.split()
     ok_terms = [w.lower() for w in terms if w.lower() not in lang_stopwords]
     return ok_terms

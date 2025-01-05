@@ -23,13 +23,14 @@ logger = logging.getLogger(__name__)
 class OnlineNewsAbstractProvider(ContentProvider):
     """
     All these endpoints accept a `domains: List[str]` search keyword arg.
+    and a `base_url: str` constructor keyword arg.
     """
 
     MAX_QUERY_LENGTH = pow(2, 14)
     BASE_URL = ""
 
     def __init__(self, **kwargs: Any):
-        # base_url must be passed with keyword
+        # base_url must be passed as keyword
         self._base_url = kwargs.pop("base_url", None) or self.BASE_URL
         super().__init__(**kwargs)
         self._client = self.get_client()
@@ -210,10 +211,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
             if chunk and domain_queries_too_big:
                 while domain_queries_too_big:
                     chunked_domains = np.array_split(domains, domain_divisor)
-                    domain_queries = [
-                        cls._assembled_query_str(base_query, domains=dom)
-                        for dom in chunked_domains
-                    ]
+                    domain_queries = [cls._assembled_query_str(base_query, domains=dom) for dom in chunked_domains]
                     domain_queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in domain_queries])
                     domain_divisor *= 2
                 
@@ -248,13 +246,20 @@ class OnlineNewsAbstractProvider(ContentProvider):
         are processed in this library, and should not be passed to clients.
         """
         # remove Chunked?
-        kwargs.pop("domains", None) # can be a set
-        kwargs.pop("filters", None) # can be a set
-        kwargs.pop("url_search_strings", None) # can be a dict[str, set]
-        kwargs.pop("url_search_string_domain", None) # TEMP
+        kwargs.pop("domains", None) # Iterable[str]
+        kwargs.pop("filters", None) # Iterable[str]
+        kwargs.pop("url_search_strings", None) # dict[str, Iterable[str]]
+        kwargs.pop("url_search_string_domain", None) # bool: TEMP
 
     @classmethod
     def _check_kwargs(cls, kwargs: dict[str, Any]) -> None:
+        """
+        check for unknown/misspelled kwargs
+
+        called with kwargs dict after query arguments removed
+        copyies kwargs, removes local-only keys and raises
+        exception if anything remains
+        """
         kwcopy = kwargs.copy()
         cls._prune_kwargs(kwcopy)
         if kwcopy:
@@ -598,14 +603,16 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     @classmethod
     def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs: Any):
         """
-        PB: added for words
+        Called by OnlineNewsAbstractProvider.all_items, .words;
+        ignores chunking!
         """
         logger.debug("MC._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
         return [cls._assembled_query_str(base_query, **kwargs)]
 
 ################################################################
-# code dragged up from mediacloud.py and news-search-api.py
-#
+# here with original code dragged up from mediacloud.py and news-search-api/api.py
+
+# imports here in case split out into its own file
 import base64
 import json
 import os
@@ -615,7 +622,6 @@ from typing import Callable, Generator
 import elasticsearch
 import mcmetadata.urls as urls
 from elasticsearch_dsl import Search, Response
-from elasticsearch_dsl.aggs import RareTerms, Sampler, SignificantTerms, SignificantText, Terms
 from elasticsearch_dsl.function import RandomScore
 from elasticsearch_dsl.query import FunctionScore, Match, QueryString
 #from elasticsearch_dsl.types import FunctionScoreContainer, SortOptions # not in 8.15
@@ -718,14 +724,27 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     * this file (domain search string)
     * mc-providers/mc_providers/mediacloud.py (date ranges)
     * news-search-api/client.py (DSL, including aggegations)
+
+    NOTE!!! Uses elasticsearch-dsl library as much as possible (rather
+    than hand-formatted JSON/dicts to allow maximum mypy type
+    enforcement!!!  Passing raw JSON means ES may silently not do what
+    you hoped/expected, or may cause ES runtime errors that could have
+    been detected earlier.
     """
 
     def __init__(self, **kwargs: Any):
-        # Profiling:
-        # CAN pass string (filename) here, but feeding all the
-        # resulting JSON files to es-tools/collapse-esperf.py for
-        # flamegraphing could get you a mish-mash of different
-        # queries' results.
+        """
+        Supported kwargs:
+
+        "profile": bool or str
+            CAN pass string (filename) here, but feeding all the
+            resulting JSON files to es-tools/collapse-esperf.py for
+            flamegraphing could get you a mish-mash of different
+            queries' results.
+        "software_id": str (may be displayed by "mc-es-top" as "opaque_id"
+        "session_id": str (user/session id for routing/caching)
+        """
+
         self._profile = kwargs.pop("profile", False)
 
         # total seconds from the last profiled query:
@@ -760,18 +779,17 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     def get_client(self):
         """
         called from OnlineNewsAbstractProvider constructor to set _client
-        so must pretend we've done it.
         """
-        # tempting to stash Elasticsearch object here, BUT, at least
-        # for initial work wanted to make sure any existing code path
-        # that tried using the _client object would blow up.  It
-        # probably helps mypy to have a dedicated _es member for
-        # Elasticsearch object.
         return None
 
     def _fields(self, expanded: bool) -> list[str]:
         """
-        from news-search-api/client.py QueryBuilder constructor
+        from news-search-api/client.py QueryBuilder constructor:
+        return list of fields for item, paged_items, all_items to return
+
+        NOTE: In the case of "indexed_date" the mapped field is currently stored
+        with only millisecond resolution, while the stored string usually
+        has microsecond resolution.
         """
         fields = ["article_title", "publication_date", "indexed_date",
                   "language", "full_language", "canonical_domain", "url", "original_url"]
@@ -779,8 +797,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             fields.append("text_content")
         return fields
 
-    # relative costs of days vs sources
-    # just guesses for now
+    # Guesses at relative number of items returned by day/source
+    # in order to (experimentally) apply filters in most efficient order.
+    # In reality, weight ratio is source/domain specific!
     SOURCE_WEIGHT = 1
     DAY_WEIGHT = 25
 
@@ -803,15 +822,16 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             #   state and selected shards do not change, searches using
             #   the same <custom-string> value are routed to the same
             #   shards in the same order.
-            # pass user-id and/or session id
+            # pass user-id and/or session id to maximize ES caching effectiveness.
             s = s.params(preference=self._session_id)
 
         # Evaluating selectors (domains/filters/url_search_strings) in "filter context";
         # Supposed to be faster, and enable caching of which documents to look at.
         # https://www.elastic.co/guide/en/elasticsearch/reference/current/query-filter-context.html#filter-context
 
-        # Apply filter with the smallest result set first.
-        # could include languages etc here
+        # Try to apply filter with the smallest result set (most selective) first,
+        # to cut down document set as soon as possible.
+        # could include languages (etc) here
 
         filters : list[tuple[int, Callable[[Search], Search]]] = [
             ((end_date - start_date).days * self.DAY_WEIGHT,
@@ -821,7 +841,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         selector_clauses = self._selector_query_clauses(kwargs)
         if selector_clauses:
             # Maybe someday construct DSL rather than resorting to string we format
-            # only to have ES have to parse it??
+            # only to have ES have to parse it??  Replace func with a Query to pass
+            # to s.filter??
             sqs = self._selector_query_string_from_clauses(selector_clauses)
             filters.append((len(selector_clauses) * self.SOURCE_WEIGHT,
                             lambda s : s.filter(SanitizedQueryString(query=sqs))))

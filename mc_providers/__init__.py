@@ -41,18 +41,30 @@ def available_provider_names() -> List[str]:
 # api_key, base_url, timeout, caching, etc
 # must now always be passed by keyword
 def provider_by_name(name: str, **kwargs) -> ContentProvider:
+    """
+    For kwargs, see provider_for
+    """
     platform, source = name.split(NAME_SEPARATOR)
     return provider_for(platform, source, **kwargs)
 
 
-# api_key, base_url, timeout, caching, etc
-# must now always be passed by keyword
 def provider_for(platform: str, source: str, **kwargs) -> ContentProvider:
     """
     A factory method that returns the appropriate data provider. Throws an exception to let you know if the
-    arguments are unsupported.
+    platform/source arguments are unsupported.
     :param platform: One of the PLATFORM_* constants above.
     :param source: One of the PLATFORM_SOURCE>* constants above.
+
+    All providers support kwargs:
+    :param caching: zero to disable in-library caching
+    :param timeout: override the default timeout for the provider (in seconds)
+
+    Providers may support (among others):
+    :param api_key: The API key needed to access the provider.
+    :param base_url: For custom integrations you can provide an alternate base URL for the provider's API server
+    :param session_id: String that identifies client session
+    :param software_id: String that identifies client software
+
     :return: the appropriate ContentProvider subclass
     """
     available = available_provider_names()
