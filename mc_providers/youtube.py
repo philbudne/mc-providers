@@ -1,5 +1,5 @@
 import datetime as dt
-from typing import List, Dict
+from typing import Any, List, Dict
 import logging
 import dateutil.parser
 import requests
@@ -25,7 +25,7 @@ class YouTubeYouTubeProvider(ContentProvider):
     Get matching YouTube videos
     """
 
-    def __init__(self, api_key: str, **kwargs):
+    def __init__(self, api_key: str, **kwargs: Any):
         super(YouTubeYouTubeProvider, self).__init__(**kwargs)
         self._logger = logging.getLogger(__name__)
         self._api_key = api_key

@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Optional, Union
+from typing import Any, List, Dict, Optional, Union
 import datetime as dt
 import datetime
 import importlib.metadata       # for SOFTWARE_ID
@@ -37,7 +37,7 @@ class ContentProvider(ABC):
     """
     SOFTWARE_ID = f"mc-providers {VERSION}"
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any):
         self._logger = logging.getLogger(__name__)
 
         self._timeout = kwargs.pop("timeout", DEFAULT_TIMEOUT)

@@ -1,7 +1,7 @@
 from collections import defaultdict
 import datetime as dt
 import requests
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 import logging
 
 from .errors import deprecated
@@ -16,7 +16,7 @@ SUBMISSION_SEARCH_URL = "{}/reddit/submission/search".format(REDDIT_PUSHSHIFT_UR
 @deprecated
 class RedditPushshiftProvider(ContentProvider):
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any):
         super(RedditPushshiftProvider, self).__init__(**kwargs)
         self._logger = logging.getLogger(__name__)
         self._session = requests.Session()  # better performance to put all HTTP through this one object

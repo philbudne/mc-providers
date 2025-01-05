@@ -26,11 +26,9 @@ class OnlineNewsAbstractProvider(ContentProvider):
     """
 
     MAX_QUERY_LENGTH = pow(2, 14)
-    TOP_WORDS_THRESHOLD = 0.1
-    DEBUG_WORDS = 0
     BASE_URL = ""
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any):
         # base_url must be passed with keyword
         self._base_url = kwargs.pop("base_url", None) or self.BASE_URL
         super().__init__(**kwargs)
@@ -49,7 +47,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     # Chunk'd
     # NB: it looks like the limit keyword here doesn't ever get passed into the query - something's missing here.
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
-               **kwargs) -> List[Dict]:
+               **kwargs: Any) -> List[Dict]:
         results = []
         for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
             this_results = self._client.sample(subquery, start_date, end_date, **kwargs)
@@ -61,14 +59,14 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return self._matches_to_rows(results)
 
     # Chunk'd
-    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
+    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> int:
         count = 0
         for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
             count += self._client.count(subquery, start_date, end_date, **kwargs)
         return count
 
     # Chunk'd
-    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
+    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Dict:
         counter: Counter = Counter()
         for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
             results = self._client.count_over_time(subquery, start_date, end_date, **kwargs)
@@ -89,12 +87,12 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
     
     # Chunk'd
-    def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs):
+    def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs: Any):
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
             for page in self._client.all_articles(subquery, start_date, end_date, **kwargs):
                 yield self._matches_to_rows(page)
 
-    def paged_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs)\
+    def paged_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs: Any)\
             -> tuple[List[Dict], Optional[str]] :
         """
         Note - this is not chunk'd so you can't run giant queries page by page... use `all_items` instead.
@@ -106,78 +104,47 @@ class OnlineNewsAbstractProvider(ContentProvider):
         page, pagination_token = self._client.paged_articles(query, start_date, end_date, **kwargs)
         return self._matches_to_rows(page), pagination_token
 
-    def _word_counts(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> tuple[int, Mapping]:
-        logger.debug("AP._word_counts %s %s %s %r", query, start_date, end_date, kwargs)
-
-        kwargs.pop("exclude", None)
-        chunked_queries = self._assemble_and_chunk_query_str_kw(query, kwargs)
-
-        # An accumulator for the subqueries
-        totals: Counter = Counter()
-
-        for subquery in chunked_queries:
-            logger.debug("AP.words subquery %s %s %s", subquery, start_date, end_date)
-
-            # for now just return top terms in article titles
-            this_results = self._client.terms(subquery, start_date, end_date,
-                                              self._client.TERM_FIELD_TITLE,
-                                              self._client.TERM_AGGREGATION_TOP)
-            if "detail" not in this_results:
-                if self.DEBUG_WORDS:
-                    logger.debug("AP.words results %s", this_results)
-                totals += Counter(this_results)
-        # PB: 5000 from "sample_size" in .words method
-        return (5000, totals)
-
     # Chunk'd
     @CachingManager.cache()
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
               **kwargs) -> List[Dict]:
-        logger.debug("AP.words %s %s %s %r", query, start_date, end_date, kwargs)
+        chunked_queries = self._assemble_and_chunk_query_str(query, **kwargs)
 
         # first figure out the dominant languages, so we can remove appropriate stopwords.
         # This method does chunking for you, so just pass the query 
         top_languages = self.languages(query, start_date, end_date, limit=100, **kwargs) 
 
+        represented_languages = [i['language'] for i in top_languages if i['ratio'] > 0.1]
         stopwords = set()
-        for lang_ent in top_languages:
-            lang = lang_ent['language']
-            ratio = lang_ent['ratio']
-
-            # skips stopwords for less represented languages,
-            # but doesn't eliminate them from sampling!!
-            if self.DEBUG_WORDS:
-                logger.debug("lang %s ratio %.6f", lang, ratio)
-            if ratio < self.TOP_WORDS_THRESHOLD:
-                continue
-            if self.DEBUG_WORDS:
-                logger.debug("getting stop words for %s", lang)
-            if len(lang) == 2:
-                # stopwords_for_language raises error of len(lang) != 2
+        for lang in represented_languages:
+            try:
                 stopwords.update(stopwords_for_language(lang))
-
-        sample_size, results_counter = self._word_counts(query, start_date, end_date,
-                                                         exclude=list(stopwords), **kwargs)
-        if self.DEBUG_WORDS > 1:
-            logger.debug("AP.words total %r", results_counter)
-            for t, c in results_counter.items():
-                logger.debug("%s %d %.6f %s", t, c, c/sample_size, t.lower() not in stopwords)
-
+            except RuntimeError:
+                pass  # not stopwords for language, just let them all pass through
+            
+        # for now just return top terms in article titles
+        sample_size = 5000
+        
+        # An accumulator for the subqueries
+        results_counter: Counter = Counter({})
+        for subquery in chunked_queries:
+            this_results = self._client.terms(subquery, start_date, end_date,
+                                     self._client.TERM_FIELD_TITLE, self._client.TERM_AGGREGATION_TOP)
+            
+            if "detail" not in this_results:
+                results_counter += Counter(this_results)
+        
+        results = dict(results_counter)
+            
         # and clean up results to return
-        top_terms = self._get_top_terms(results_counter, stopwords, sample_size)
+        top_terms = [dict(term=t.lower(), count=c, ratio=c/sample_size) for t, c in results.items()
+                     if t.lower() not in stopwords]
         top_terms = sorted(top_terms, key=lambda x:x["count"], reverse=True)
         return top_terms
 
-    def _get_top_terms(self, results_counter: Mapping, stopwords: Iterable[str], sample_size: int) -> List[Dict]:
-        """
-        eliminate any stopwords and format for return
-        """
-        return [dict(term=t.lower(), count=c, ratio=c/sample_size) for t, c in results_counter.items()
-                if t.lower() not in stopwords]
-
     # Chunk'd
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
-                  **kwargs) -> List[Dict]:
+                  **kwargs: Any) -> List[Dict]:
         
         matching_count = self.count(query, start_date, end_date, **kwargs)
 
@@ -199,7 +166,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
     # Chunk'd
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                **kwargs) -> List[Dict]:
+                **kwargs: Any) -> List[Dict]:
         
         results_counter: Counter = Counter({})
         for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
@@ -212,7 +179,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return cleaned_sources
 
     @classmethod
-    def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs):
+    def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs: Any):
         """
         If a query string is too long, we can attempt to run it anyway by splitting the domain substring (which is
         guaranteed to be only a sequence of ANDs) into parts, to produce multiple smaller queries which are collectively
@@ -344,7 +311,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return cls._selector_query_string_from_clauses(cls._selector_query_clauses(kwargs))
 
     @classmethod
-    def _assembled_query_str(cls, query: str, **kwargs) -> str:
+    def _assembled_query_str(cls, query: str, **kwargs: Any) -> str:
         logger.debug("_assembled_query_str IN: %s %r", query, kwargs)
         sqs = cls._selector_query_string(kwargs) # takes dict
         if sqs:
@@ -372,7 +339,7 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)  # will call get_client
 
     def get_client(self):
@@ -452,7 +419,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     DEFAULT_COLLECTION = os.environ.get(
         "ELASTICSEARCH_INDEX_NAME_PREFIX", "mc_search") + "-*"
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)
 
     def get_client(self):
@@ -540,7 +507,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         logger.debug("MC._selector_query_clauses OUT: %s", selector_clauses)
         return selector_clauses
 
-    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
+    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> int:
         logger.debug("MC.count %s %s %s %r", query, start_date, end_date, kwargs)
         # no chunking on MC
         results = self._overview_query(query, start_date, end_date, **kwargs)
@@ -557,7 +524,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         logger.debug("MC._count_from_overview: %s", count)
         return count
 
-    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
+    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Dict:
         logger.debug("MC.count_over_time %s %s %s %r", query, start_date, end_date, kwargs)
         results = self._overview_query(query, start_date, end_date, **kwargs)
         to_return: List[Dict] = []
@@ -576,7 +543,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return {'counts': to_return}
 
     # NB: limit argument ignored, but included to keep mypy quiet
-    def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20, **kwargs) -> List[Dict]:
+    def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20, **kwargs: Any) -> List[Dict]:
         logger.debug("MC.sample %s %s %s %r", query, start_date, end_date, kwargs)
         results = self._overview_query(query, start_date, end_date, **kwargs)
         if self._is_no_results(results):
@@ -587,7 +554,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return rows
 
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
-                  **kwargs) -> List[Dict]:
+                  **kwargs: Any) -> List[Dict]:
         logger.debug("MC.languages %s %s %s %r", query, start_date, end_date, kwargs)
         results = self._overview_query(query, start_date, end_date, **kwargs)
         if self._is_no_results(results):
@@ -608,7 +575,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return items
 
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                **kwargs) -> List[Dict]:
+                **kwargs: Any) -> List[Dict]:
         logger.debug("MC.sources %s %s %s %r", query, start_date, end_date, kwargs)
         results = self._overview_query(query, start_date, end_date, **kwargs)
         if self._is_no_results(results):
@@ -620,7 +587,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return items
 
     @CachingManager.cache('overview')
-    def _overview_query(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
+    def _overview_query(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Dict:
         logger.debug("MC._overview %s %s %s %r", query, start_date, end_date, kwargs)
 
         # no chunking on MC
@@ -629,7 +596,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return self._client._overview_query(q, start_date, end_date, **kwargs)
 
     @classmethod
-    def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs):
+    def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs: Any):
         """
         PB: added for words
         """
@@ -667,7 +634,7 @@ class SanitizedQueryString(QueryString):
     """
     query string (expression) with quoting
     """
-    def __init__(self, query: str, **kwargs):
+    def __init__(self, query: str, **kwargs: Any):
         super().__init__(query=_sanitize(query), **kwargs)
 
 
@@ -753,7 +720,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     * news-search-api/client.py (DSL, including aggegations)
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any):
         # Profiling:
         # CAN pass string (filename) here, but feeding all the
         # resulting JSON files to es-tools/collapse-esperf.py for
@@ -818,7 +785,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     DAY_WEIGHT = 25
 
     def _basic_search(self, user_query: str, start_date: dt.datetime, end_date: dt.datetime,
-                     expanded: bool = False, source: bool = True, **kwargs) -> Search:
+                     expanded: bool = False, source: bool = True, **kwargs: Any) -> Search:
         """
         from news-search-api/api.py cs_basic_query
         create a elasticsearch_dsl query from user_query, date range, and kwargs
@@ -915,10 +882,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             self._process_profile_data(pdata, profile)
 
         try:                    # look for circuit breaker trips, etc
-            # Response.success() wants success
+            # Response.success() wants success,
             # self._shards.total == self._shards.successful and not self.timed_out
-            # but we can't be choosey right now because of top words (mis)behavior
-            # the logging below WILL happen often!
+            # because of circuit breaker trips in aggregation based top words,
+            # had to let errors thru, but with sample based top words,
+            # reconsider?!
             shards = res._shards
             if shards:
                 failed = shards.failed
@@ -971,7 +939,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                      query_ns, rewrite_ns, coll_ns, agg_ns)
 
     @CachingManager.cache('overview')
-    def _overview_query(self, q: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> dict:
+    def _overview_query(self, q: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> dict:
         """
         from news-search-api/api.py
         returns empty dict when no hits
@@ -1009,128 +977,6 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             "matches": [_format_match(h) for h in hits], # _match_to_row called in .sample()
         }
 
-    def _terms(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
-               field: str, aggr: str, exclude: list[str] = [], **kwargs) -> tuple[int, Dict]:
-        """
-        only called internally, so no field/aggr checks
-        """
-        agg_name = "topterms"
-        sampler_name = "sample"
-
-        profile = kwargs.pop("profile", None)
-        self._check_kwargs(kwargs)
-        search = self._basic_search(query, start_date, end_date, source=False, **kwargs)
-        if aggr == "top":
-            # To get more accurate results, the terms agg fetches more
-            # than the top size terms from each shard. It fetches the
-            # top `shard_size` terms, which defaults to `size` * 1.5 + 10.
-
-            # Terms must appear in `min_doc_count` documents (default is 1).
-
-            # The parameter `shard_min_doc_count` regulates the
-            # certainty a shard has if the term should actually be
-            # added to the candidate list or not with respect to the
-            # min_doc_count. Terms will only be considered if their
-            # local shard frequency within the set is higher than the
-            # shard_min_doc_count.
-
-            agg_terms = Terms(field=field, size=200,
-                              min_doc_count=10, # default is 1
-                              shard_min_doc_count=5, # default is 0
-                              exclude=exclude) # stop words!
-            shard_size = 500
-        elif aggr == "significant":
-            # Returns interesting or unusual occurrences of terms in a
-            # set.  The terms selected are not simply the most popular
-            # terms in a set. They are the terms that have undergone a
-            # significant change in popularity measured between a
-            # foreground and background set.
-
-            agg_terms = SignificantTerms(field=field, size=200,
-                                         min_doc_count=10, shard_min_doc_count=5,
-                                         exclude=exclude) # stop words!
-            shard_size = 500
-
-            # See also "significant text" aggregation:
-            # Designed for use on `text` fields.
-            # Does not require field data.
-            # Re-analyzes text on the fly.
-        elif aggr == "rare":
-            # "rare" terms are at the long-tail of the distribution
-            # and are not frequent. Conceptually, this is like a terms
-            # aggregation that is sorted by _count ascending.
-
-            # from https://github.com/internetarchive/web_collection_search/blob/2e189b5/api.py#L179??
-            agg_terms = RareTerms(field=field, exclude="[0-9].*")
-            shard_size = 10
-        elif aggr == "significant_text": # phil's addition
-            # Returns interesting or unusual occurrences of terms in a
-            # set.  The terms selected are not simply the most popular
-            # terms in a set. They are the terms that have undergone a
-            # significant change in popularity measured between a
-            # foreground and background set.
-
-            # Can be used on any `text` field; does NOT require
-            # "fielddata" (and the memory problems that entails) BUT
-            # means text needs to be analyzed on the fly, with higher
-            # CPU usage.
-            agg_terms = SignificantText(field=field,
-                                         exclude=exclude) # stop words!
-            shard_size = 500
-        else:
-            raise ValueError(aggr)
-
-        # The `shard_size` parameter limits how many top-scoring
-        # documents are collected in the sample processed on each
-        # shard. The default value is 100.
-
-        search.aggs.bucket(sampler_name,
-                           "sampler",
-                           shard_size=shard_size).aggs[agg_name] = agg_terms
- 
-        # Try asking for no "hits" array; This means we can't use
-        # _get_hits (which uses res.success() which checks for failed
-        # shards (which often happen here due to circuit breakers
-        # tripping) here! track_total_hits=False is the default,
-        # but being extra careful.
-        search = search.extra(size=0, track_total_hits=False)
-
-        res = self._search(search, profile=profile)
-
-        # Response.success() wants _shards.success == _shards.total,
-        # but we need to be happy with what we can get!
-        # _search will already have logged a summary of failed shards.
-        if not res.timed_out:
-            samples = res["aggregations"][sampler_name]
-            buckets = samples[agg_name]["buckets"]
-            doc_count = samples["doc_count"]
-            logger.debug("scanned %d docs, %d buckets returned", doc_count, len(buckets))
-            if buckets and doc_count:
-                return (doc_count, _format_counts(buckets))
-
-        return (0, {})
-
-
-    def _word_counts(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> tuple[int, Mapping]:
-        """
-        called by OnlineNewsAbstractProvider.words.
-        NOTE! uses "exclude" in kwargs, with list of stop words!
-        """
-        logger.debug("MC._words %s %s %s %r", query, start_date, end_date, kwargs)
-
-        field = "article_title" # or "text_content"
-        aggr = "top"
-        # aggr = "significant_text"
-        return self._terms(query, start_date, end_date, field=field, aggr=aggr, **kwargs)
-
-    def _get_top_terms(self, results_counter: Mapping, stopwords: Iterable[str], sample_size: int) -> List[Dict]:
-        """
-        called by OnlineNewsAbstractProvider.words.
-        NOTE! Not using stopwords (we've asked ES to exclude them)
-        """
-        return [dict(term=t.lower(), count=c, ratio=c/sample_size)
-                for t, c in results_counter.items()]
-
     @CachingManager.cache()
     def item(self, item_id: str) -> Dict:
         s = Search(index=self.DEFAULT_COLLECTION, using=self._es)\
@@ -1148,7 +994,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             self, query: str,
             start_date: dt.datetime, end_date: dt.datetime,
             page_size: int = 1000,
-            **kwargs
+            **kwargs: Any
     ) -> tuple[list[dict], Optional[str]]:
         """
         return a single page of data (with `page_size` items).
@@ -1207,7 +1053,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
     def all_items(self, query: str,
                   start_date: dt.datetime, end_date: dt.datetime,
-                  page_size: int = _ES_MAXPAGE, **kwargs):
+                  page_size: int = _ES_MAXPAGE, **kwargs: Any):
         """
         returns generator of pages (lists) of items
         """
@@ -1227,12 +1073,12 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             if not next_page_token:
                 break
 
-    RANDOM_STORY_WORDS_SAMPLES = 5000   # number of stories to pull
-    def _random_story_words(self,
+    WORDS_STORIES = 5000   # number of stories to pull
+    def words(self,
                             query: str,
                             start_date: dt.datetime, end_date: dt.datetime,
                             limit: int = 100, # number of top words to return
-                            **kwargs) -> list[dict]:
+                            **kwargs: Any) -> list[dict]:
 
         full_text = bool(kwargs.pop("full_text", True)) # XXX TEMP?
         remove_punctuation = bool(kwargs.pop("remove_punctuation", True)) # XXX TEMP?
@@ -1260,7 +1106,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                          )
                      )\
                      .source([text_field, "language"])\
-                     .extra(size=self.RANDOM_STORY_WORDS_SAMPLES)
+                     .extra(size=self.WORDS_STORIES)
 
         search_results = self._search(search, profile=profile)
         hits = _get_hits(search_results)
@@ -1283,6 +1129,3 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         logger.info("_random_story_words processing time %.3f ms", (time.monotonic() - t0) * 1000)
 
         return results
-
-    # comment out to revert to ES aggregation based version:
-    words = _random_story_words
