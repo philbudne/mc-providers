@@ -307,6 +307,10 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return selector_clauses
 
     @classmethod
+    def _selector_count(cls, kwargs: dict) -> int:
+        return len(kwargs.get('domains', [])) + len(kwargs.get('filters', []))
+
+    @classmethod
     def _selector_query_string_from_clauses(cls, clauses: list[str]) -> str:
         return " OR ".join(clauses)
 
@@ -469,9 +473,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         """
         return self._client._is_no_results(results)
 
-
     @classmethod
-    def _selector_query_clauses(cls, kwargs: dict) -> List[str]:
+    def _selector_query_clauses(cls, kwargs: dict) -> list[str]:
         """
         take domains, filters, url_search_strings as kwargs
         return a list of query_strings to be OR'ed together
@@ -483,7 +486,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         # Here to try to get web-search out of query
         # formatting biz.  Accepts a Mapping indexed by
         # domain_string, of lists (or sets!) of search_strings.
-        url_search_strings: Mapping[str, Iterable[str]] = kwargs.get('url_search_strings', [])
+        url_search_strings: UrlSearchStrings = kwargs.get('url_search_strings', {})
         if url_search_strings:
             # Unclear if domain field check actually helps at all,
             # so make it optional for testing.
@@ -514,6 +517,15 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
         logger.debug("MC._selector_query_clauses OUT: %s", selector_clauses)
         return selector_clauses
+
+    @classmethod
+    def _selector_count(cls, kwargs: dict) -> int:
+        url_search_strings: UrlSearchStrings = kwargs.get('url_search_strings', {})
+        count = super()._selector_count(kwargs)
+        if url_search_strings:
+            # count each search string once
+            count += sum(len(uss) for uss in url_search_strings.values())
+        return count
 
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> int:
         logger.debug("MC.count %s %s %s %r", query, start_date, end_date, kwargs)
@@ -617,7 +629,7 @@ import base64
 import json
 import os
 import time
-from typing import Callable
+from typing import Callable, TypeAlias
 
 import elasticsearch
 import mcmetadata.urls as urls
@@ -630,6 +642,8 @@ from elasticsearch_dsl.response import Hit
 from elasticsearch_dsl.utils import AttrDict
 
 from .language import terms_without_stopwords
+
+UrlSearchStrings: TypeAlias = Mapping[str, Iterable[str]]
 
 def _sanitize(s: str) -> str:
     """
@@ -714,9 +728,10 @@ def _get_hits(res: Response) -> list[Hit]:
 
 _ES_MAXPAGE = 1000
 
-Field = str | InstrumentedField # quiet mypy complaints
-FilterTuple = tuple[int, Query | None]
+Field: TypeAlias = str | InstrumentedField # quiet mypy complaints
+FilterTuple: TypeAlias = tuple[int, Query | None]
 
+# return value for _overview
 _empty_overview = Overview(query="", total=-1, topdomains={}, toplangs={}, dailycounts={}, matches=[])
 
 class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
@@ -808,21 +823,29 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             fields.append("text_content")
         return fields
 
-    # Guesses at relative number of items returned by day/source
-    # in order to (experimentally) apply filters in most efficient order.
-    # In reality, weight ratio is source/domain specific!
-    SOURCE_WEIGHT = 1
-    DAY_WEIGHT = 25
+    # Allow weighting in order to (experimentally) apply filters in
+    # most efficient order (most selective filter first).  An average
+    # day is about 500K stories for all sources.  1K stories/day would
+    # be a large source.  BUT adding a day means only expanding a
+    # range, not adding another term...
+    SELECTOR_WEIGHT = 1         # domains, filters, url_search_strings
+    DAY_WEIGHT = 1
 
     @classmethod
     def _selector_filter_tuple(cls, kwargs: dict) -> FilterTuple:
-        # Maybe someday construct DSL (Match | Match ....) rather than
-        # resorting to string we format only to have ES have to parse
-        # it??  Should initially take temp kwarg to allow A/B testing!!!
+        """
+        function to allow construction of DSL
+        rather than restorting to formatting/quoting query-string
+        only to have ES have to parse it??
+        For canonical_domain: "Match" query defaults to OR for space separated words
+        For url: use "Wildcard"??
+        Should initially take temp kwarg bool to allow A/B testing!!!
+        """
+
         selector_clauses = cls._selector_query_clauses(kwargs)
         if selector_clauses:
             sqs = cls._selector_query_string_from_clauses(selector_clauses)
-            return (len(selector_clauses) * cls.SOURCE_WEIGHT,
+            return (cls._selector_count(kwargs) * cls.SOURCE_WEIGHT,
                     SanitizedQueryString(query=sqs))
         else:
             return (0, None)
@@ -833,20 +856,23 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         from news-search-api/api.py cs_basic_query
         create a elasticsearch_dsl query from user_query, date range, and kwargs
         """
-        # works for date or datetime!
+        # works for date or datetime! publication_date is just YYYY-MM-DD
         start = start_date.strftime("%Y-%m-%dT00:00:00Z") # paranoia
         end = end_date.strftime("%Y-%m-%d") # T23:59:59:999_999_999Z implied?
 
-        s = Search(index=self._index_from_dates(start_date, end_date), using=self._es)\
-            .query(SanitizedQueryString(query=user_query, default_field="text_content", default_operator="and"))
+        s = Search(index=self._index_from_dates(start_date, end_date), using=self._es)
+
+        if user_query.strip() != "*":
+            s = s.query(SanitizedQueryString(query=user_query, default_field="text_content", default_operator="and"))
 
         if self._session_id:
+            # pass user-id and/or session
+            #   id to maximize ES caching effectiveness.
             # https://www.elastic.co/guide/en/elasticsearch/reference/7.17/search-search.html#search-preference
-            #   "Any string that does not start with _. If the cluster
-            #   state and selected shards do not change, searches using
-            #   the same <custom-string> value are routed to the same
+            #   If the cluster state and selected shards do not
+            #   change, searches using the same <custom-string> value
+            #   (that does not start with "_") are routed to the same
             #   shards in the same order.
-            # pass user-id and/or session id to maximize ES caching effectiveness.
             s = s.params(preference=self._session_id)
 
         # Evaluating selectors (domains/filters/url_search_strings) in "filter context";
@@ -855,8 +881,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         # Try to apply filter with the smallest result set (most selective) first,
         # to cut down document set as soon as possible.
-        # could include languages (etc) here
 
+        # could include languages (etc) here:
         days = (end_date - start_date).days + 1
         filters : list[FilterTuple] = [
             (days * self.DAY_WEIGHT, Range(publication_date={'gte': start, "lte": end})),
@@ -867,6 +893,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         filters.sort()
         for weight, query in filters:
             if query:
+                # ends up as list under bool.filter:
                 s = s.filter(query)
 
         if source:              # return source (fields)?
@@ -1000,8 +1027,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         search.aggs.bucket(AGG_LANG, "terms", field="language.keyword", size=100)
         search.aggs.bucket(AGG_DOMAIN, "terms", field="canonical_domain", size=100)
         search = search.extra(track_total_hits=True)
-        res = self._search(search, profile=profile)
-        hits = _get_hits(res)
+        res = self._search(search, profile=profile) # run search
+        hits = _get_hits(res)   # get hits list
         if not hits:
             return _empty_overview # checked by _is_no_results
 
@@ -1121,15 +1148,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
               limit: int = 100, # number of top words to return
               **kwargs: Any) -> list[Term]:
 
-        full_text = bool(kwargs.pop("full_text", True)) # XXX TEMP?
         remove_punctuation = bool(kwargs.pop("remove_punctuation", True)) # XXX TEMP?
         profile = kwargs.pop("profile", None)
         self._check_kwargs(kwargs)
 
-        if full_text:
-            text_field = "text_content"
-        else:
-            text_field = "article_title"
+        text_field = "article_title"
 
         # https://github.com/elastic/elasticsearch-dsl-py/issues/1369
         # https://github.com/csinchok/django-bulbs/blob/1ba8f0c95502f952d01617188e947346959a7e30/bulbs/content/search.py#L2
