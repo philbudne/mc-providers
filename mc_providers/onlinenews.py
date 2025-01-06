@@ -4,7 +4,7 @@ import logging
 import os
 import random
 from collections import Counter
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional, TypedDict
 
 # PyPI
 import ciso8601
@@ -13,12 +13,22 @@ import numpy as np              # for chunking
 from waybacknews.searchapi import SearchApiClient
 
 from .language import stopwords_for_language
-from .provider import ContentProvider
+from .provider import AllItems, ContentProvider, CountOverTime, Date, Item, Items, Language, Source, Term
 from .cache import CachingManager
 from .mediacloud import MCSearchApiClient
 
 # don't need a logger per Provider instance
 logger = logging.getLogger(__name__)
+
+Counts = dict[str, int]         # key: count
+
+class Overview(TypedDict):
+    query: str
+    total: int
+    topdomains: Counts          # from _format_counts
+    toplangs: Counts            # from _format_counts
+    dailycounts: Counts         # from _format_day_counts
+    matches: list[Dict]         # from _format_match
 
 class OnlineNewsAbstractProvider(ContentProvider):
     """
@@ -27,11 +37,8 @@ class OnlineNewsAbstractProvider(ContentProvider):
     """
 
     MAX_QUERY_LENGTH = pow(2, 14)
-    BASE_URL = ""
 
     def __init__(self, **kwargs: Any):
-        # base_url must be passed as keyword
-        self._base_url = kwargs.pop("base_url", None) or self.BASE_URL
         super().__init__(**kwargs)
         self._client = self.get_client()
 
@@ -48,7 +55,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     # Chunk'd
     # NB: it looks like the limit keyword here doesn't ever get passed into the query - something's missing here.
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
-               **kwargs: Any) -> List[Dict]:
+               **kwargs: Any) -> Items:
         results = []
         for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
             this_results = self._client.sample(subquery, start_date, end_date, **kwargs)
@@ -67,7 +74,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return count
 
     # Chunk'd
-    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Dict:
+    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
         counter: Counter = Counter()
         for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
             results = self._client.count_over_time(subquery, start_date, end_date, **kwargs)
@@ -75,20 +82,20 @@ class OnlineNewsAbstractProvider(ContentProvider):
             counter += Counter(countable)
         
         counter_dict = dict(counter)
-        results = [{"date": date, "timestamp": date.timestamp(), "count": count} for date, count in counter_dict.items()]
+        results = [Date(date=date, timestamp=date.timestamp(), count=count) for date, count in counter_dict.items()]
         # Somehow the order of this list gets out of wack. Sorting before returning for the sake of testability
-        sorted_results = sorted(results, key=lambda x: x["timestamp"])
-        return {'counts': sorted_results}
+        results.sorted(key=lambda x: x["timestamp"])
+        return CountOverTime(counts=results)
 
     
     @CachingManager.cache()
-    def item(self, item_id: str) -> Dict:
+    def item(self, item_id: str) -> Item:
         one_item = self._client.article(item_id)
         return self._match_to_row(one_item)
 
     
     # Chunk'd
-    def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs: Any):
+    def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs: Any) -> AllItems:
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
             for page in self._client.all_articles(subquery, start_date, end_date, **kwargs):
                 yield self._matches_to_rows(page)
@@ -108,7 +115,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     # Chunk'd
     @CachingManager.cache()
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-              **kwargs) -> List[Dict]:
+              **kwargs: Any) -> List[Term]:
         chunked_queries = self._assemble_and_chunk_query_str(query, **kwargs)
 
         # first figure out the dominant languages, so we can remove appropriate stopwords.
@@ -138,14 +145,14 @@ class OnlineNewsAbstractProvider(ContentProvider):
         results = dict(results_counter)
             
         # and clean up results to return
-        top_terms = [dict(term=t.lower(), count=c, ratio=c/sample_size) for t, c in results.items()
+        top_terms = [Term(term=t.lower(), count=c, ratio=c/sample_size) for t, c in results.items()
                      if t.lower() not in stopwords]
         top_terms = sorted(top_terms, key=lambda x:x["count"], reverse=True)
         return top_terms
 
     # Chunk'd
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
-                  **kwargs: Any) -> List[Dict]:
+                  **kwargs: Any) -> List[Language]:
         
         matching_count = self.count(query, start_date, end_date, **kwargs)
 
@@ -154,20 +161,16 @@ class OnlineNewsAbstractProvider(ContentProvider):
             this_languages = self._client.top_languages(subquery, start_date, end_date, **kwargs)
             countable = {item["name"]: item["value"] for item in this_languages}
             results_counter += Counter(countable)
-            # top_languages.extend(this_languages)
         
-        top_languages = [{'language': name, 'value': value, 'ratio': 0.0} for name, value in results_counter.items()]
+        top_languages = [Language(language=name, value=value, ratio=value/matching_count) for name, value in results_counter.items()]
         
-        for item in top_languages:
-            item['ratio'] = item['value'] / matching_count
-        
-        # Sort by count, then alphabetically
+        # Sort by count
         top_languages = sorted(top_languages, key=lambda x: x['value'], reverse=True)
         return top_languages[:limit]
 
     # Chunk'd
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                **kwargs: Any) -> List[Dict]:
+                **kwargs: Any) -> List[Source]:
         
         results_counter: Counter = Counter({})
         for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
@@ -175,12 +178,12 @@ class OnlineNewsAbstractProvider(ContentProvider):
             countable = {source['name']: source['value'] for source in results}
             results_counter += Counter(countable)
         
-        cleaned_sources = [{"source": source , "count": count} for source, count in results_counter.items()]
+        cleaned_sources = [Source(source=source, count=count) for source, count in results_counter.items()]
         cleaned_sources = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
         return cleaned_sources
 
     @classmethod
-    def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs: Any):
+    def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs: Any) -> list[str]:
         """
         If a query string is too long, we can attempt to run it anyway by splitting the domain substring (which is
         guaranteed to be only a sequence of ANDs) into parts, to produce multiple smaller queries which are collectively
@@ -267,7 +270,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
             raise TypeError(f"unknown keyword args: {exstring}")
 
     @classmethod
-    def _assemble_and_chunk_query_str_kw(cls, base_query: str, kwargs: dict = {}):
+    def _assemble_and_chunk_query_str_kw(cls, base_query: str, kwargs: dict = {}) -> list[str]:
         """
         takes kwargs as *dict*, removes items that shouldn't be sent to _client
         """
@@ -327,11 +330,11 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return q
 
     @classmethod
-    def _matches_to_rows(cls, matches: List) -> List:
+    def _matches_to_rows(cls, matches: List) -> Items:
         raise NotImplementedError()
 
     @classmethod
-    def _match_to_row(cls, match: Dict) -> Dict:
+    def _match_to_row(cls, match: Dict) -> Item:
         raise NotImplementedError()
 
     def __repr__(self) -> str:
@@ -358,7 +361,7 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
         return "domain"
 
     @classmethod
-    def _matches_to_rows(cls, matches: List) -> List:
+    def _matches_to_rows(cls, matches: List) -> Items:
         return [OnlineNewsWaybackMachineProvider._match_to_row(m) for m in matches]
 
     @classmethod
@@ -460,7 +463,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     def __repr__(self) -> str:
         return "OnlineNewsMediaCloudProvider"
 
-    def _is_no_results(self, results) -> bool:
+    def _is_no_results(self, results: Overview) -> bool:
         """
         used to test _overview_query results
         """
@@ -518,34 +521,33 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         results = self._overview_query(query, start_date, end_date, **kwargs)
         return self._count_from_overview(results)
 
-    def _count_from_overview(self, results: Dict) -> int:
+    def _count_from_overview(self, results: Overview) -> int:
         """
         used in .count() and .languages()
         """
         if self._is_no_results(results):
-            logger.debug("MC._count_from_overview: no results")
+            logger.debug("MC._count_from_overview: no results") # XXX raise exception?
             return 0
         count = results['total']
         logger.debug("MC._count_from_overview: %s", count)
         return count
 
-    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Dict:
+    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
         logger.debug("MC.count_over_time %s %s %s %r", query, start_date, end_date, kwargs)
         results = self._overview_query(query, start_date, end_date, **kwargs)
-        to_return: List[Dict] = []
+        to_return: List[Date] = []
         if not self._is_no_results(results):
             data = results['dailycounts']
-            to_return = []
             # transform to list of dicts for easier use: process in sorted order
             for day_date in sorted(data):  # date is in 'YYYY-MM-DD' format
                 dt = ciso8601.parse_datetime(day_date) # PB: is datetime!!
-                to_return.append({
-                    'date': dt.date(), # PB: was returning datetime!
-                    'timestamp': dt.timestamp(), # PB: conversion may be to local time!!
-                    'count': data[day_date]
-                })
+                to_return.append(Date(
+                    date=dt.date(), # PB: was returning datetime!
+                    timestamp=int(dt.timestamp()), # PB: conversion may be to local time!!
+                    count=data[day_date]
+                ))
         logger.debug("MC.count_over_time %d items", len(to_return))
-        return {'counts': to_return}
+        return CountOverTime(counts=to_return)
 
     # NB: limit argument ignored, but included to keep mypy quiet
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20, **kwargs: Any) -> List[Dict]:
@@ -559,19 +561,16 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return rows
 
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
-                  **kwargs: Any) -> List[Dict]:
+                  **kwargs: Any) -> List[Language]:
         logger.debug("MC.languages %s %s %s %r", query, start_date, end_date, kwargs)
         results = self._overview_query(query, start_date, end_date, **kwargs)
         if self._is_no_results(results):
             return []
-        top_languages = [{'language': name, 'value': value, 'ratio': 0.0}
+        matches = self._count_from_overview(results)
+        top_languages = [Language(language=name, value=value, ratio=value/matches)
                          for name, value in results['toplangs'].items()]
         logger.debug("MC.languages: _overview returned %d items", len(top_languages))
 
-        # now normalize
-        matching_count = self._count_from_overview(results)
-        for item in top_languages:
-            item['ratio'] = item['value'] / matching_count
         # Sort by count
         top_languages = sorted(top_languages, key=lambda x: x['value'], reverse=True)
         items = top_languages[:limit]
@@ -580,19 +579,20 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return items
 
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                **kwargs: Any) -> List[Dict]:
+                **kwargs: Any) -> List[Source]:
         logger.debug("MC.sources %s %s %s %r", query, start_date, end_date, kwargs)
         results = self._overview_query(query, start_date, end_date, **kwargs)
+        items: list[Source]
         if self._is_no_results(results):
             items = []
         else:
-            cleaned_sources = [{"source": source, "count": count} for source, count in results['topdomains'].items()]
+            cleaned_sources = [Source(source=source, count=count) for source, count in results['topdomains'].items()]
             items = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
         logger.debug("MC.sources: %d items", len(items))
         return items
 
     @CachingManager.cache('overview')
-    def _overview_query(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Dict:
+    def _overview_query(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Overview:
         logger.debug("MC._overview %s %s %s %r", query, start_date, end_date, kwargs)
 
         # no chunking on MC
@@ -601,7 +601,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return self._client._overview_query(q, start_date, end_date, **kwargs)
 
     @classmethod
-    def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs: Any):
+    def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs: Any) -> list[str]:
         """
         Called by OnlineNewsAbstractProvider.all_items, .words;
         ignores chunking!
@@ -617,7 +617,7 @@ import base64
 import json
 import os
 import time
-from typing import Callable, Generator
+from typing import Callable
 
 import elasticsearch
 import mcmetadata.urls as urls
@@ -662,10 +662,10 @@ def _format_match(hit: Hit, expanded: bool = False) -> dict:
         res["text_content"] = getattr(hit, "text_content", None)
     return res
 
-def _format_day_counts(bucket: list) -> dict[str, int]:
+def _format_day_counts(bucket: list) -> Counts:
     """
     from news-search-api/api.py;
-    used to format "dailycounts"
+    used to format "dailycounts" aggregation result
 
     takes [{"key_as_string": "YYYY-MM-DDT00:00:00.000Z", "doc_count": count}, ....]
     and returns {"YYYY-MM-DD": count, ....}
@@ -673,10 +673,10 @@ def _format_day_counts(bucket: list) -> dict[str, int]:
     return {item["key_as_string"][:10]: item["doc_count"] for item in bucket}
 
 
-def _format_counts(bucket: list) -> dict[str, int]:
+def _format_counts(bucket: list) -> Counts:
     """
     from news-search-api/api.py
-    used to format "topdomains" & "toplangs"
+    used to format "topdomains" & "toplangs" aggregation results
 
     takes [{"key": key, "doc_count": doc_count}, ....]
     and returns {key: count, ....}
@@ -717,16 +717,19 @@ _ES_MAXPAGE = 1000
 Field = str | InstrumentedField # quiet mypy complaints
 FilterTuple = tuple[int, Query | None]
 
+_empty_overview = Overview(query="", total=-1, topdomains={}, toplangs={}, dailycounts={}, matches=[])
+
 class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     """
     version of MC Provider going direct to ES.
 
     Consolidates query formatting/creation previously spread
-    across multiple files, including:
+    across multiple files:
 
     * web-search/mcweb/backend/search/utils.py (url_search_strings)
     * this file (domain search string)
     * mc-providers/mc_providers/mediacloud.py (date ranges)
+    * news-search-api/api.py (aggregation result handling)
     * news-search-api/client.py (DSL, including aggegations)
 
     NOTE!!! Uses elasticsearch-dsl library as much as possible (rather
@@ -735,6 +738,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     you hoped/expected, or may cause ES runtime errors that could have
     been detected earlier.
     """
+
+    WORDS_SAMPLE = 5000
 
     def __init__(self, **kwargs: Any):
         """
@@ -869,11 +874,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         else:
             return s.source(False) # no source fields in hits
 
-    def _is_no_results(self, results: Dict) -> bool:
+    def _is_no_results(self, results: Overview) -> bool:
         """
         used to test _overview_query results
         """
-        return not results
+        return results is _empty_overview
 
     def _index_from_dates(self, start_date: dt.datetime | None, end_date: dt.datetime | None) -> list[str]:
         """
@@ -972,10 +977,10 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                      query_ns, rewrite_ns, coll_ns, agg_ns)
 
     @CachingManager.cache('overview')
-    def _overview_query(self, q: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> dict:
+    def _overview_query(self, q: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Overview:
         """
         from news-search-api/api.py
-        returns empty dict when no hits
+        returns _empty_overview when no hits
         """
 
         logger.debug("MC._overview %s %s %s %r", q, start_date, end_date, kwargs)
@@ -998,34 +1003,36 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         res = self._search(search, profile=profile)
         hits = _get_hits(res)
         if not hits:
-            return {}           # checked by _is_no_results
+            return _empty_overview # checked by _is_no_results
 
+        # res.hits.total.value documented at
+        # https://elasticsearch-dsl.readthedocs.io/en/stable/search_dsl.html#response
+        # but mypy complains
+        total = res["hits"]["total"]["value"]
         aggs = res.aggregations
 
-        # res.hits.total.value documented, but mypy complains
-        total = res["hits"]["total"]["value"]
-
-        return {
-            "query": q,
-            "total": total,
-            "topdomains": _format_counts(aggs[AGG_DOMAIN]["buckets"]),
-            "toplangs": _format_counts(aggs[AGG_LANG]["buckets"]),
-            "dailycounts": _format_day_counts(aggs[AGG_DAILY]["buckets"]),
-            "matches": [_format_match(h) for h in hits], # _match_to_row called in .sample()
-        }
+        return Overview(
+            query=q,
+            total=total,
+            topdomains=_format_counts(aggs[AGG_DOMAIN]["buckets"]),
+            toplangs=_format_counts(aggs[AGG_LANG]["buckets"]),
+            dailycounts=_format_day_counts(aggs[AGG_DAILY]["buckets"]),
+            matches=[_format_match(h) for h in hits], # _match_to_row called in .sample()
+        )
 
     @CachingManager.cache()
-    def item(self, item_id: str) -> Dict:
+    def item(self, item_id: str) -> Item:
+        expanded = True         # always includes full_text!!
         s = Search(index=self.DEFAULT_COLLECTION, using=self._es)\
             .query(Match(_id=item_id))\
-            .source(includes=self._fields(expanded=True)) # always includes full_text!!
+            .source(includes=self._fields(expanded)) 
         res = self._search(s)
         hits = _get_hits(res)
         if not hits:
             return {}
 
         # double conversion!
-        return self._match_to_row(_format_match(hits[0], True))
+        return self._match_to_row(_format_match(hits[0], expanded))
 
     def paged_items(
             self, query: str,
@@ -1090,7 +1097,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
     def all_items(self, query: str,
                   start_date: dt.datetime, end_date: dt.datetime,
-                  page_size: int = _ES_MAXPAGE, **kwargs: Any) -> Generator[list[dict], None, None]:
+                  page_size: int = _ES_MAXPAGE, **kwargs: Any) -> AllItems:
         """
         returns generator of pages (lists) of items
         """
@@ -1110,12 +1117,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             if not next_page_token:
                 break
 
-    WORDS_STORIES = 5000   # number of stories to pull
-    def words(self,
-                            query: str,
-                            start_date: dt.datetime, end_date: dt.datetime,
-                            limit: int = 100, # number of top words to return
-                            **kwargs: Any) -> list[dict]:
+    def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
+              limit: int = 100, # number of top words to return
+              **kwargs: Any) -> list[Term]:
 
         full_text = bool(kwargs.pop("full_text", True)) # XXX TEMP?
         remove_punctuation = bool(kwargs.pop("remove_punctuation", True)) # XXX TEMP?
@@ -1143,7 +1147,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                          )
                      )\
                      .source([text_field, "language"])\
-                     .extra(size=self.WORDS_STORIES)
+                     .extra(size=self.WORDS_SAMPLE)
 
         search_results = self._search(search, profile=profile)
         hits = _get_hits(search_results)
@@ -1155,10 +1159,12 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         t0 = time.monotonic()
         for hit in hits:
             sampled_count += 1
-            counts.update(terms_without_stopwords(hit["language"], hit[text_field], remove_punctuation))
+            counts.update(
+                terms_without_stopwords(hit["language"],
+                                        hit[text_field], remove_punctuation))
 
         # normalize and format results
-        results = [{"term": w, "count": c, "ratio": c/sampled_count}
+        results = [Term(term=w, count=c, ratio=c/sampled_count)
                    for w, c in counts.most_common(limit)]
 
         # majority of time spent processing when processing full text!!!

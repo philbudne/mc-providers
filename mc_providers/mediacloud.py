@@ -63,7 +63,6 @@ class MCSearchApiClient:
         if api_base_url:
             self.API_BASE_URL = api_base_url
         self._session = requests.Session()  # better performance to put all HTTP through this one object
-        self._logger = logging.getLogger(__name__)
 
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> List[Dict]:
         results = self._overview_query(query, start_date, end_date, **kwargs)

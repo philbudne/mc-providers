@@ -1,8 +1,7 @@
 import logging
-from typing import Any, List, Dict, Optional, Union
+from typing import Any, List, Dict, Generator, Optional, TypedDict, Union
 import datetime as dt
-import datetime
-import importlib.metadata       # for SOFTWARE_ID
+import importlib.metadata       # to get version for SOFTWARE_ID
 from operator import itemgetter
 from abc import ABC
 import collections
@@ -12,9 +11,6 @@ from .language import terms_without_stopwords
 
 # helpful for turning any date into the standard Media Cloud date format
 MC_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-
-DEFAULT_WORDS_SAMPLE = 500
-DEFAULT_LANGUAGE_SAMPLE = 1000
 
 DEFAULT_TIMEOUT = 60  # to be used across all the providers; override via one-time call to set_default_timeout
 
@@ -29,6 +25,31 @@ def set_default_timeout(timeout: int) -> None:
     global DEFAULT_TIMEOUT
     DEFAULT_TIMEOUT = timeout
 
+Item = dict[str, Any]           # differs between providers?
+Items = list[Item]              # page of items
+AllItems = Generator[Items, None, None]
+
+class Date(TypedDict):
+    date: dt.date
+    timestamp: int
+    count: int
+
+class CountOverTime(TypedDict):
+    counts: List[Date]
+
+class Language(TypedDict):
+    language: str
+    value: int
+    ratio: float                # really fraction?!
+
+class Source(TypedDict):
+    source: str
+    count: int
+
+class Term(TypedDict):
+    term: str
+    count: int
+    ratio: float                # really fraction?!
 
 class ContentProvider(ABC):
     """
@@ -37,29 +58,41 @@ class ContentProvider(ABC):
     """
     SOFTWARE_ID = f"mc-providers {VERSION}"
 
-    def __init__(self, **kwargs: Any):
-        self._logger = logging.getLogger(__name__)
+    BASE_URL = ""               # subclass can override
 
-        self._timeout = kwargs.pop("timeout", DEFAULT_TIMEOUT)
-        if self._timeout is None:
-            self._timeout = DEFAULT_TIMEOUT
-        assert isinstance(self._timeout, (int, float))
+    WORDS_SAMPLE = 500
 
-        # force bool to int.
-        # -1 means suppress caching in upstream software!
-        self._caching = int(kwargs.pop("caching", 1))
+    LANGUAGE_SAMPLE = 1000
+
+    def __init__(self,
+                 api_key: str | None = None,
+                 base_url: str | None = None,
+                 timeout: int | None = None,
+                 caching: int | bool = 1,
+                 session_id: str | None = None,
+                 software_id: str | None = None):
+        """
+        api_key and base_url only required by some providers, but accept for all.
+        """
+
+        self._api_key = api_key
+        self._base_url = base_url or self.BASE_URL
+
+        if timeout is None:
+            timeout = DEFAULT_TIMEOUT # possibly using set_default_timeout
+        self._timeout = timeout
+
+        # force bool to int: < 0 means suppress caching in downstream software!
+        self._caching = int(caching)
 
         # identify user/session making request (for caching)
-        self._session_id = kwargs.pop("session_id", None)
+        self._session_id = session_id
 
         # identify software making request
-        # (use in User-Agent strings!!)
-        self._software_id = kwargs.pop("software_id", self.SOFTWARE_ID)
-
-        if kwargs:
-            # complain about anything else to detect typos
-            unknown = ", ".join(kwargs.keys())
-            raise NotImplementedError(f"Unknown argument(s): {unknown}")
+        # (could be used in User-Agent strings)
+        if software_id is None:
+            software_id = self.SOFTWARE_ID
+        self._software_id = software_id
 
     def everything_query(self) -> str:
         raise QueryingEverythingUnsupportedQuery()
@@ -71,25 +104,26 @@ class ContentProvider(ABC):
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
         raise NotImplementedError("Doesn't support total count.")
 
-    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
+    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> CountOverTime:
         raise NotImplementedError("Doesn't support counts over time.")
 
     def item(self, item_id: str) -> Dict:
         raise NotImplementedError("Doesn't support fetching individual content.")
 
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-              **kwargs) -> List[Dict]:
+              **kwargs) -> List[Term]:
         raise NotImplementedError("Doesn't support top words.")
 
-    def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> List[Dict]:
+    def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> List[Language]:
         raise NotImplementedError("Doesn't support top languages.")
 
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                **kwargs) -> List[Dict]:
+                **kwargs) -> List[Source]:
         raise NotImplementedError("Doesn't support top sources.")
 
     def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000,
-                  **kwargs):
+                  **kwargs) -> AllItems:
+
         # yields a page of items
         raise NotImplementedError("Doesn't support fetching all matching content.")
 
@@ -123,7 +157,7 @@ class ContentProvider(ABC):
         }
 
     @classmethod
-    def _sum_count_by_date(cls, counts: List[Dict]) -> List[Dict]:
+    def _sum_count_by_date(cls, counts: List[Dict]) -> List[Date]:
         """
         Given a list of counts, sum the counts by date
         :param counts:
@@ -146,9 +180,9 @@ class ContentProvider(ABC):
 
     # use this if you need to sample some content for top languages
     def _sampled_languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
-                               **kwargs) -> List[Dict]:
+                               **kwargs) -> List[Language]:
         # support sample_size kwarg
-        sample_size = kwargs['sample_size'] if 'sample_size' in kwargs else DEFAULT_LANGUAGE_SAMPLE
+        sample_size = kwargs['sample_size'] if 'sample_size' in kwargs else self.LANGUAGE_SAMPLE
         # grab a sample and count terms as we page through it
         sampled_count = 0
         counts: collections.Counter = collections.Counter()
@@ -156,14 +190,14 @@ class ContentProvider(ABC):
             sampled_count += len(page)
             [counts.update(t['language'] for t in page)]
         # clean up results
-        results = [dict(language=w, count=c, ratio=c/sampled_count) for w, c in counts.most_common()]
-        return results[:limit]
+        results = [Language(language=w, value=c, ratio=c/sampled_count) for w, c in counts.most_common(limit)]
+        return results
 
     # use this if you need to sample some content for top words
     def _sampled_title_words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                             **kwargs) -> List[Dict]:
+                             **kwargs) -> List[Term]:
         # support sample_size kwarg
-        sample_size = kwargs['sample_size'] if 'sample_size' in kwargs else DEFAULT_WORDS_SAMPLE
+        sample_size = kwargs['sample_size'] if 'sample_size' in kwargs else self.WORDS_SAMPLE
         # grab a sample and count terms as we page through it
         sampled_count = 0
         counts: collections.Counter = collections.Counter()
@@ -171,9 +205,8 @@ class ContentProvider(ABC):
             sampled_count += len(page)
             [counts.update(terms_without_stopwords(t['language'], t['title'])) for t in page]
         # clean up results
-        results = [dict(term=w, count=c, ratio=c/sampled_count) for w, c in counts.most_common(limit)]
+        results = [Term(term=w, count=c, ratio=c/sampled_count) for w, c in counts.most_common(limit)]
         return results
-
 
 def add_missing_dates_to_split_story_counts(counts, start, end, period="day"):
     if start is None and end is None:
@@ -188,11 +221,11 @@ def add_missing_dates_to_split_story_counts(counts, start, end, period="day"):
         else:
             new_counts.append({'date': date_string, 'count': 0})
         if period == "day":
-            current += datetime.timedelta(days=1)
+            current += dt.timedelta(days=1)
         elif period == "month":
-            current += datetime.timedelta(days=31)
+            current += dt.timedelta(days=31)
         elif period == "year":
-            current += datetime.timedelta(days=365)
+            current += dr.timedelta(days=365)
         else:
             raise RuntimeError("Unsupport time period for filling in missing dates - {}".format(period))
     return new_counts

@@ -15,10 +15,10 @@ SUBMISSION_SEARCH_URL = "{}/reddit/submission/search".format(REDDIT_PUSHSHIFT_UR
 
 @deprecated
 class RedditPushshiftProvider(ContentProvider):
+    BASE_URL = SUBMISSION_SEARCH_URL
 
     def __init__(self, **kwargs: Any):
         super(RedditPushshiftProvider, self).__init__(**kwargs)
-        self._logger = logging.getLogger(__name__)
         self._session = requests.Session()  # better performance to put all HTTP through this one object
 
     def everything_query(self) -> str:
@@ -52,7 +52,6 @@ class RedditPushshiftProvider(ContentProvider):
         data = self._cached_submission_search(q=query,
                                               start_date=start_date, end_date=end_date,
                                               size=0, track_total_hits=True, **kwargs)
-        # self._logger.debug(data)
         return data['metadata']['es']['hits']['total']['value']
 
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
@@ -60,7 +59,6 @@ class RedditPushshiftProvider(ContentProvider):
                                               start_date=start_date, end_date=end_date,
                                               size=0,
                                               calendar_histogram='day', **kwargs)
-        # self._logger.debug(data)
         buckets = data['metadata']['es']['aggregations']['calendar_histogram']['buckets']
         to_return = []
         for item in buckets:
@@ -110,6 +108,7 @@ class RedditPushshiftProvider(ContentProvider):
         limit, aggs, etc)
         :return:
         """
+        # could pass self._software_id as User-Agent?
         headers = {'Content-type': 'application/json'}
         params = defaultdict()
         if query is not None:
@@ -122,7 +121,7 @@ class RedditPushshiftProvider(ContentProvider):
         params['metadata'] = 'true'
         # and now add in any other arguments they have sent in
         params.update(kwargs)
-        r = self._session.get(SUBMISSION_SEARCH_URL, headers=headers, params=params, timeout=self._timeout)
+        r = self._session.get(self._base_url, headers=headers, params=params, timeout=self._timeout)
         # temp = r.url # useful assignment for debugging investigations
         return r.json()
 

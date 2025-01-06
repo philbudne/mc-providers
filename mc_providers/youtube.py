@@ -25,10 +25,8 @@ class YouTubeYouTubeProvider(ContentProvider):
     Get matching YouTube videos
     """
 
-    def __init__(self, api_key: str, **kwargs: Any):
+    def __init__(self, **kwargs: Any):
         super(YouTubeYouTubeProvider, self).__init__(**kwargs)
-        self._logger = logging.getLogger(__name__)
-        self._api_key = api_key
         self._session = requests.Session()  # better performance to put all HTTP through this one object
 
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
