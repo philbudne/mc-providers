@@ -4,7 +4,7 @@ import logging
 import os
 import random
 from collections import Counter
-from typing import Any, Dict, Iterable, List, Mapping, Optional, TypedDict
+from typing import Any, Dict, List, Mapping, Optional, Sequence, TypeAlias, TypedDict
 
 # PyPI
 import ciso8601
@@ -20,7 +20,8 @@ from .mediacloud import MCSearchApiClient
 # don't need a logger per Provider instance
 logger = logging.getLogger(__name__)
 
-Counts = dict[str, int]         # key: count
+Counts: TypeAlias = dict[str, int]         # key: count
+UrlSearchStrings: TypeAlias = Mapping[str, set[str]] # want Countable[str]
 
 class Overview(TypedDict):
     query: str
@@ -523,8 +524,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         url_search_strings: UrlSearchStrings = kwargs.get('url_search_strings', {})
         count = super()._selector_count(kwargs)
         if url_search_strings:
-            # count each search string once
-            count += sum(len(uss) for uss in url_search_strings.values())
+            count += sum(map(len, url_search_strings.values()))
         return count
 
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> int:
@@ -538,7 +538,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         used in .count() and .languages()
         """
         if self._is_no_results(results):
-            logger.debug("MC._count_from_overview: no results") # XXX raise exception?
+            logger.debug("MC._count_from_overview: no results")
             return 0
         count = results['total']
         logger.debug("MC._count_from_overview: %s", count)
@@ -643,12 +643,24 @@ from elasticsearch_dsl.utils import AttrDict
 
 from .language import terms_without_stopwords
 
-UrlSearchStrings: TypeAlias = Mapping[str, Iterable[str]]
+Field: TypeAlias = str | InstrumentedField # quiet mypy complaints
+FilterTuple: TypeAlias = tuple[int, Query | None]
+
+_ES_MAXPAGE = 1000              # define globally (ie; in .providers)???
+
+# return value for _overview
+_EMPTY_OVERVIEW = Overview(query="", total=-1, topdomains={}, toplangs={}, dailycounts={}, matches=[])
+
+# pagination for paged_items()
+# was publication_date, but it's awful for pagination
+# (can only return a single page per day!)
+_DEF_PAGE_SORT_FIELD = "indexed_date"
+_DEF_PAGE_SORT_ORDER = "desc"
 
 def _sanitize(s: str) -> str:
     """
     quote slashes to avoid interpretation as /regexp/
-    as done by _sanitize_es_query in mediacloud.py client library
+    as done by _sanitize_es_query in mc_providers/mediacloud.py client library
     """
     return s.replace("/", r"\/")
 
@@ -661,6 +673,9 @@ class SanitizedQueryString(QueryString):
 
 
 def _format_match(hit: Hit, expanded: bool = False) -> dict:
+    """
+    from news-search-api/client.py EsClientWrapper.format_match
+    """
     res = {
         "article_title": getattr(hit, "article_title", None),
         "publication_date": getattr(hit, "publication_date", "")[:10] or None,
@@ -678,7 +693,8 @@ def _format_match(hit: Hit, expanded: bool = False) -> dict:
 
 def _format_day_counts(bucket: list) -> Counts:
     """
-    from news-search-api/api.py;
+    from news-search-api/client.py EsClientWrapper.format_count
+
     used to format "dailycounts" aggregation result
 
     takes [{"key_as_string": "YYYY-MM-DDT00:00:00.000Z", "doc_count": count}, ....]
@@ -689,18 +705,14 @@ def _format_day_counts(bucket: list) -> Counts:
 
 def _format_counts(bucket: list) -> Counts:
     """
-    from news-search-api/api.py
+    from news-search-api/client.py EsClientWrapper.format_count
+
     used to format "topdomains" & "toplangs" aggregation results
 
     takes [{"key": key, "doc_count": doc_count}, ....]
     and returns {key: count, ....}
     """
     return {item["key"]: item["doc_count"] for item in bucket}
-
-# was publication_date, but it's awful for pagination
-# (can only return a single page per day!)
-_DEF_PAGE_SORT_FIELD = "indexed_date"
-_DEF_PAGE_SORT_ORDER = "desc"
 
 def _b64_encode_page_token(strng: str) -> str:
     return base64.b64encode(strng.encode(), b"-_").decode().replace("=", "~")
@@ -723,16 +735,8 @@ def _get_hits(res: Response) -> list[Hit]:
     try:
         return res.hits
     except AttributeError:
-        logger.warn("res.hits failed!") # XXX raise an Exception?
+        logger.warn("failed to get res.hits!") # XXX raise an Exception?
         return []
-
-_ES_MAXPAGE = 1000
-
-Field: TypeAlias = str | InstrumentedField # quiet mypy complaints
-FilterTuple: TypeAlias = tuple[int, Query | None]
-
-# return value for _overview
-_empty_overview = Overview(query="", total=-1, topdomains={}, toplangs={}, dailycounts={}, matches=[])
 
 class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     """
@@ -845,7 +849,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         selector_clauses = cls._selector_query_clauses(kwargs)
         if selector_clauses:
             sqs = cls._selector_query_string_from_clauses(selector_clauses)
-            return (cls._selector_count(kwargs) * cls.SOURCE_WEIGHT,
+            return (cls._selector_count(kwargs) * cls.SELECTOR_WEIGHT,
                     SanitizedQueryString(query=sqs))
         else:
             return (0, None)
@@ -905,7 +909,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
         used to test _overview_query results
         """
-        return results is _empty_overview
+        return results is _EMPTY_OVERVIEW
 
     def _index_from_dates(self, start_date: dt.datetime | None, end_date: dt.datetime | None) -> list[str]:
         """
@@ -1007,7 +1011,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     def _overview_query(self, q: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Overview:
         """
         from news-search-api/api.py
-        returns _empty_overview when no hits
+        returns _EMPTY_OVERVIEW when no hits
         """
 
         logger.debug("MC._overview %s %s %s %r", q, start_date, end_date, kwargs)
@@ -1030,7 +1034,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         res = self._search(search, profile=profile) # run search
         hits = _get_hits(res)   # get hits list
         if not hits:
-            return _empty_overview # checked by _is_no_results
+            return _EMPTY_OVERVIEW # checked by _is_no_results
 
         # res.hits.total.value documented at
         # https://elasticsearch-dsl.readthedocs.io/en/stable/search_dsl.html#response
@@ -1056,7 +1060,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         res = self._search(s)
         hits = _get_hits(res)
         if not hits:
-            return {}
+            return {}           # XXX raise exception?
 
         # double conversion!
         return self._match_to_row(_format_match(hits[0], expanded))

@@ -1,5 +1,5 @@
 import logging
-from typing import Any, List, Dict, Generator, Optional, TypedDict, Union
+from typing import Any, List, Dict, Generator, Optional, TypeAlias, TypedDict, Union
 import datetime as dt
 import importlib.metadata       # to get version for SOFTWARE_ID
 from operator import itemgetter
@@ -25,9 +25,9 @@ def set_default_timeout(timeout: int) -> None:
     global DEFAULT_TIMEOUT
     DEFAULT_TIMEOUT = timeout
 
-Item = dict[str, Any]           # differs between providers?
-Items = list[Item]              # page of items
-AllItems = Generator[Items, None, None]
+Item: TypeAlias = dict[str, Any]           # differs between providers?
+Items: TypeAlias = list[Item]              # page of items
+AllItems: TypeAlias = Generator[Items, None, None]
 
 class Date(TypedDict):
     date: dt.date
