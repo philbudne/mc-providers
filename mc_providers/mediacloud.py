@@ -43,7 +43,7 @@ def dict_to_list(data: Dict) -> List[Dict]:
 
 class MCSearchApiClient:
 
-    API_BASE_URL = "https://news-search-api.tarbell.mediacloud.org/{}/".format(API_VERSION)
+    API_BASE_URL = "http://ramos.angwin/{}/".format(API_VERSION)
     TIMEOUT_SECS = 30
 
     # constants used when requesting top terms
@@ -53,7 +53,7 @@ class MCSearchApiClient:
     TERM_AGGREGATION_SIGNIFICANT = "significant"
     TERM_AGGREGATION_RARE = "rare"
 
-    def __init__(self, collection: str, api_base_url: str = None):
+    def __init__(self, collection: str, api_base_url: str | None = None):
         """
         :param collection: the archive support multiple collections of stories so you have to pass in the
                            name of the collection you want to search against

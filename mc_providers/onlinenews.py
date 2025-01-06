@@ -759,21 +759,23 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     """
 
     WORDS_SAMPLE = 5000
+    BASE_URL = "http://ramos.angwin:9200,http://woodward.angwin:9200,http://bradley.angwin:9200"
 
     def __init__(self, **kwargs: Any):
         """
         Supported kwargs:
 
         "profile": bool or str
+            if True, request profiling data, and log total ES CPU usage
             CAN pass string (filename) here, but feeding all the
             resulting JSON files to es-tools/collapse-esperf.py for
             flamegraphing could get you a mish-mash of different
             queries' results.
-        "software_id": str (may be displayed by "mc-es-top" as "opaque_id"
+        "software_id": str (may be displayed by "mc-es-top" as "opaque_id")
         "session_id": str (user/session id for routing/caching)
         """
 
-        self._profile = kwargs.pop("profile", False)
+        self._profile: str | bool = kwargs.pop("profile", False)
 
         # total seconds from the last profiled query:
         self._last_elastic_ms = -1.0

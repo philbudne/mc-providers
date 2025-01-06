@@ -63,7 +63,7 @@ def terms_without_stopwords(lang_code: str, text: str, remove_punctuation: bool 
     except RuntimeError:
         # no stopwords for this language, so just let them all through
         logger.info(f"No stopwords for {lang_code}")
-        lang_stopwords = []
+        lang_stopwords = set()
     if remove_punctuation:
         text = PUNCTUATION_RE.sub('', text)
     terms = text.split()

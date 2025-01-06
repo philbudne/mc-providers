@@ -98,43 +98,43 @@ class ContentProvider(ABC):
         raise QueryingEverythingUnsupportedQuery()
 
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
-               **kwargs) -> List[Dict]:
+               **kwargs: Any) -> List[Dict]:
         raise NotImplementedError("Doesn't support sample content.")
 
-    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
+    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> int:
         raise NotImplementedError("Doesn't support total count.")
 
-    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> CountOverTime:
+    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
         raise NotImplementedError("Doesn't support counts over time.")
 
     def item(self, item_id: str) -> Dict:
         raise NotImplementedError("Doesn't support fetching individual content.")
 
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-              **kwargs) -> List[Term]:
+              **kwargs: Any) -> List[Term]:
         raise NotImplementedError("Doesn't support top words.")
 
-    def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> List[Language]:
+    def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> List[Language]:
         raise NotImplementedError("Doesn't support top languages.")
 
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                **kwargs) -> List[Source]:
+                **kwargs: Any) -> List[Source]:
         raise NotImplementedError("Doesn't support top sources.")
 
     def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000,
-                  **kwargs) -> AllItems:
+                  **kwargs: Any) -> AllItems:
 
         # yields a page of items
         raise NotImplementedError("Doesn't support fetching all matching content.")
 
     def paged_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000,
-                    **kwargs) -> tuple[List[Dict], Optional[str]]:
+                    **kwargs: Any) -> tuple[List[Dict], Optional[str]]:
         # return just one page of items and a pagination token to get next page; implementing subclasses
         # should read in token, offset, or whatever else they need from `kwargs` to determine which page to return
         raise NotImplementedError("Doesn't support fetching all matching content.")
 
     def normalized_count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
-                                   **kwargs) -> Dict:
+                                   **kwargs: Any) -> Dict:
         """
         Useful for rendering attention-over-time charts with extra information suitable for normalizing
         HACK: calling _sum_count_by_date for now to solve a problem specific to the Media Cloud provider
@@ -180,7 +180,7 @@ class ContentProvider(ABC):
 
     # use this if you need to sample some content for top languages
     def _sampled_languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
-                               **kwargs) -> List[Language]:
+                               **kwargs: Any) -> List[Language]:
         # support sample_size kwarg
         sample_size = kwargs['sample_size'] if 'sample_size' in kwargs else self.LANGUAGE_SAMPLE
         # grab a sample and count terms as we page through it
@@ -195,7 +195,7 @@ class ContentProvider(ABC):
 
     # use this if you need to sample some content for top words
     def _sampled_title_words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                             **kwargs) -> List[Term]:
+                             **kwargs: Any) -> List[Term]:
         # support sample_size kwarg
         sample_size = kwargs['sample_size'] if 'sample_size' in kwargs else self.WORDS_SAMPLE
         # grab a sample and count terms as we page through it
@@ -225,7 +225,7 @@ def add_missing_dates_to_split_story_counts(counts, start, end, period="day"):
         elif period == "month":
             current += dt.timedelta(days=31)
         elif period == "year":
-            current += dr.timedelta(days=365)
+            current += dt.timedelta(days=365)
         else:
             raise RuntimeError("Unsupport time period for filling in missing dates - {}".format(period))
     return new_counts

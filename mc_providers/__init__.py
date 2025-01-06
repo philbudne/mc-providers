@@ -1,7 +1,7 @@
 import logging
-from typing import List, Optional
+from typing import Any, List, NamedTuple, Optional
 
-from .exceptions import UnknownProviderException, UnavailableProviderException, APIKeyRequired
+from .exceptions import UnknownProviderException, MissingRequiredValue
 from .provider import ContentProvider, DEFAULT_TIMEOUT, set_default_timeout
 from .reddit import RedditPushshiftProvider
 from .twitter import TwitterTwitterProvider
@@ -25,76 +25,67 @@ PLATFORM_SOURCE_MEDIA_CLOUD = "mediacloud"
 
 NAME_SEPARATOR = "-"
 
+class _PT(NamedTuple):          # provider tuple
+    cls: type[ContentProvider]
+    required: list[str]
+
+
 def provider_name(platform: str, source: str) -> str:
     return platform + NAME_SEPARATOR + source
 
+_KEY_REQ = ["api_key"]
+_URL_REQ = ["base_url"]
+_PROVIDER_MAP: dict[str, _PT] = {
+    provider_name(PLATFORM_TWITTER, PLATFORM_SOURCE_TWITTER): _PT(TwitterTwitterProvider, _KEY_REQ),
+    provider_name(PLATFORM_YOUTUBE, PLATFORM_SOURCE_YOUTUBE): _PT(RedditPushshiftProvider, []),
+    provider_name(PLATFORM_REDDIT, PLATFORM_SOURCE_PUSHSHIFT): _PT(YouTubeYouTubeProvider, _KEY_REQ),
+    provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_WAYBACK_MACHINE): _PT(OnlineNewsWaybackMachineProvider, _URL_REQ),
+#   provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD): _PT(OnlineNewsMediaCloudProvider, []),
+    provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD): _PT(OnlineNewsMediaCloudESProvider, _URL_REQ),
+}
+
+_PROVIDER_NAMES: List[str] = list(_PROVIDER_MAP.keys())
 
 def available_provider_names() -> List[str]:
-    return [
-        provider_name(PLATFORM_TWITTER, PLATFORM_SOURCE_TWITTER),
-        provider_name(PLATFORM_YOUTUBE, PLATFORM_SOURCE_YOUTUBE),
-        provider_name(PLATFORM_REDDIT, PLATFORM_SOURCE_PUSHSHIFT),
-        provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_WAYBACK_MACHINE),
-        provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD)
-    ]
+    # called from frontend/index.html view, so pre-calculated
+    return _PROVIDER_NAMES
 
-# api_key, base_url, timeout, caching, etc
-# must now always be passed by keyword
-def provider_by_name(name: str, **kwargs) -> ContentProvider:
+def provider_for(platform: str, source: str, **kwargs: Any) -> ContentProvider:
     """
-    For kwargs, see provider_for
+    :param platform: One of the PLATFORM_* constants above.
+    :param source: One of the PLATFORM_SOURCE_* constants above.
+
+    see provider_by_name for kwargs
     """
-    platform, source = name.split(NAME_SEPARATOR)
-    return provider_for(platform, source, **kwargs)
+    return provider_by_name(provider_name(platform, source), **kwargs)
 
 
-def provider_for(platform: str, source: str, **kwargs) -> ContentProvider:
+def provider_by_name(name: str, **kwargs: Any) -> ContentProvider:
     """
     A factory method that returns the appropriate data provider. Throws an exception to let you know if the
     platform/source arguments are unsupported.
-    :param platform: One of the PLATFORM_* constants above.
-    :param source: One of the PLATFORM_SOURCE>* constants above.
 
     All providers support kwargs:
     :param caching: zero to disable in-library caching
     :param timeout: override the default timeout for the provider (in seconds)
 
     Providers may support (among others):
-    :param api_key: The API key needed to access the provider.
+    :param api_key: The API key needed to access the provider (may be required)
     :param base_url: For custom integrations you can provide an alternate base URL for the provider's API server
     :param session_id: String that identifies client session
     :param software_id: String that identifies client software
 
     :return: the appropriate ContentProvider subclass
     """
-    available = available_provider_names()
     platform_provider: ContentProvider
-    if provider_name(platform, source) in available:
-        api_key = kwargs.pop("api_key", None)
-        if (platform == PLATFORM_TWITTER) and (source == PLATFORM_SOURCE_TWITTER):
-            if api_key is None:
-                raise APIKeyRequired(platform)
 
-            platform_provider = TwitterTwitterProvider(api_key, **kwargs)
+    if name not in _PROVIDER_MAP:
+        platform, source = name.split(NAME_SEPARATOR, 1)
+        raise UnknownProviderException(platform, source)
 
-        elif (platform == PLATFORM_REDDIT) and (source == PLATFORM_SOURCE_PUSHSHIFT):
-            platform_provider = RedditPushshiftProvider(**kwargs)
+    pt = _PROVIDER_MAP[name]
+    for required in pt.required:
+        if not kwargs.get(required):
+            raise MissingRequiredValue(platform, required)
 
-        elif (platform == PLATFORM_YOUTUBE) and (source == PLATFORM_SOURCE_YOUTUBE):
-            if api_key is None:
-                raise APIKeyRequired(platform)
-
-            platform_provider = YouTubeYouTubeProvider(api_key, **kwargs)
-        
-        elif (platform == PLATFORM_ONLINE_NEWS) and (source == PLATFORM_SOURCE_WAYBACK_MACHINE):
-            platform_provider = OnlineNewsWaybackMachineProvider(**kwargs)
-
-        elif (platform == PLATFORM_ONLINE_NEWS) and (source == PLATFORM_SOURCE_MEDIA_CLOUD):
-            platform_provider = OnlineNewsMediaCloudESProvider(**kwargs)
-
-        else:
-            raise UnknownProviderException(platform, source)
-
-        return platform_provider
-    else:
-        raise UnavailableProviderException(platform, source)
+    return pt.cls(**kwargs)

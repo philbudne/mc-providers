@@ -8,13 +8,13 @@ class UnsupportedOperationException(ProviderException):
 
 
 class UnknownProviderException(ProviderException):
-    def __init__(self, platform, source):
+    def __init__(self, platform: str, source: str):
         super().__init__("Unknown provider {} from {}".format(platform, source))
 
 
-class UnavailableProviderException(ProviderException):
-    def __init__(self, platform, source):
-        super().__init__("Unavailable provider {} from {}".format(platform, source))
+class MissingRequiredValue(ProviderException):
+    def __init__(self, platform: str, keyword: str):
+        super().__init__("provider {} requires {}".format(platform, keyword))
 
 
 class QueryingEverythingUnsupportedQuery(ProviderException):
@@ -22,6 +22,6 @@ class QueryingEverythingUnsupportedQuery(ProviderException):
         super().__init__("Can't query everything")
 
 
-class APIKeyRequired(ProviderException):
-    def __init__(self, platform):
-        super().__init__("Provider {} requires an API key at construction".format(platform))
+# backwards compatibility:
+APIKeyRequired = MissingRequiredValue
+UnavailableProviderException = UnknownProviderException
