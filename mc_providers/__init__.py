@@ -54,6 +54,7 @@ def provider_for(platform: str, source: str,
                  caching: int = 1,
                  # PLEASE do not add any new parameters here!
                  # See provider_by_name "NOTE!" comment below
+                 *,
                  **kwargs: Any) -> ContentProvider:
     """
     :param platform: One of the PLATFORM_* constants above.
@@ -74,6 +75,10 @@ def provider_by_name(name: str,
                      base_url: Optional[str] = None,
                      timeout: Optional[int] = None,
                      caching: int = 1,
+                     *,
+                     # New parameters should ONLY be added to Provider
+                     # constructors.  Parameters that apply to all providers
+                     # should be added to ContentProvider.__init__
                      **kwargs: Any) -> ContentProvider:
     """
     A factory method that returns the appropriate data provider. Throws an exception to let you know if the
