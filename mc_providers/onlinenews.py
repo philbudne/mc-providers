@@ -39,6 +39,9 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
     MAX_QUERY_LENGTH = pow(2, 14)
 
+    # default values for constructor arguments
+    API_KEY = ""                # not required
+
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)
         self._client = self.get_client()
@@ -868,7 +871,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         s = Search(index=self._index_from_dates(start_date, end_date), using=self._es)
 
-        if user_query.strip() != "*":
+        if user_query.strip() != self.everything_query(): # not "*"?
             s = s.query(SanitizedQueryString(query=user_query, default_field="text_content", default_operator="and"))
 
         if self._session_id:
@@ -882,17 +885,17 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             s = s.params(preference=self._session_id)
 
         # Evaluating selectors (domains/filters/url_search_strings) in "filter context";
-        # Supposed to be faster, and enable caching of which documents to look at.
+        # Supposed to be faster, and enable caching of document set.
         # https://www.elastic.co/guide/en/elasticsearch/reference/current/query-filter-context.html#filter-context
 
         # Try to apply filter with the smallest result set (most selective) first,
         # to cut down document set as soon as possible.
 
-        # could include languages (etc) here:
         days = (end_date - start_date).days + 1
         filters : list[FilterTuple] = [
             (days * self.DAY_WEIGHT, Range(publication_date={'gte': start, "lte": end})),
             self._selector_filter_tuple(kwargs)
+            # could include languages (etc) here
         ]
 
         # try applying more selective queries (fewer results) first
@@ -906,6 +909,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             return s.source(self._fields(expanded))
         else:
             return s.source(False) # no source fields in hits
+
+    def __repr__(self) -> str:
+        return "OnlineNewsMediaCloudESProvider"
 
     def _is_no_results(self, results: Overview) -> bool:
         """
@@ -1062,7 +1068,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         res = self._search(s)
         hits = _get_hits(res)
         if not hits:
-            return {}           # XXX raise exception?
+            return {}
 
         # double conversion!
         return self._match_to_row(_format_match(hits[0], expanded))

@@ -25,6 +25,10 @@ class YouTubeYouTubeProvider(ContentProvider):
     Get matching YouTube videos
     """
 
+    # defaults for constructor
+    #API_KEY MUST be supplied!
+    BASE_URL = YT_SEARCH_API_URL
+
     def __init__(self, **kwargs: Any):
         super(YouTubeYouTubeProvider, self).__init__(**kwargs)
         self._session = requests.Session()  # better performance to put all HTTP through this one object
@@ -136,7 +140,7 @@ class YouTubeYouTubeProvider(ContentProvider):
             'order': order,
             'pageToken': page_token,
         }
-        response = self._session.get(YT_SEARCH_API_URL, headers=YT_SEARCH_HEADERS, params=params, timeout=self._timeout)
+        response = self._session.get(self._base_url, headers=YT_SEARCH_HEADERS, params=params, timeout=self._timeout)
         return response.json()
 
     def __repr__(self):
