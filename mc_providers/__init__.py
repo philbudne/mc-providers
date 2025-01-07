@@ -27,21 +27,20 @@ NAME_SEPARATOR = "-"
 
 class _PT(NamedTuple):          # provider tuple
     cls: type[ContentProvider]
-    required: list[str]
+    required: list[str] = []
 
 
 def provider_name(platform: str, source: str) -> str:
     return platform + NAME_SEPARATOR + source
 
 _KEY_REQ = ["api_key"]
-_URL_REQ = ["base_url"]
 _PROVIDER_MAP: dict[str, _PT] = {
     provider_name(PLATFORM_TWITTER, PLATFORM_SOURCE_TWITTER): _PT(TwitterTwitterProvider, _KEY_REQ),
-    provider_name(PLATFORM_YOUTUBE, PLATFORM_SOURCE_YOUTUBE): _PT(RedditPushshiftProvider, []),
+    provider_name(PLATFORM_YOUTUBE, PLATFORM_SOURCE_YOUTUBE): _PT(RedditPushshiftProvider),
     provider_name(PLATFORM_REDDIT, PLATFORM_SOURCE_PUSHSHIFT): _PT(YouTubeYouTubeProvider, _KEY_REQ),
-    provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_WAYBACK_MACHINE): _PT(OnlineNewsWaybackMachineProvider, _URL_REQ),
-#   provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD): _PT(OnlineNewsMediaCloudProvider, []),
-    provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD): _PT(OnlineNewsMediaCloudESProvider, _URL_REQ),
+    provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_WAYBACK_MACHINE): _PT(OnlineNewsWaybackMachineProvider),
+#   provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD): _PT(OnlineNewsMediaCloudProvider),
+    provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD): _PT(OnlineNewsMediaCloudESProvider),
 }
 
 _PROVIDER_NAMES: List[str] = list(_PROVIDER_MAP.keys())

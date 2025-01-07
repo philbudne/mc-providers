@@ -30,23 +30,38 @@ Items: TypeAlias = list[Item]              # page of items
 AllItems: TypeAlias = Generator[Items, None, None]
 
 class Date(TypedDict):
+    """
+    element of counts list in count_over_time return
+    """
     date: dt.date
     timestamp: int
     count: int
 
 class CountOverTime(TypedDict):
+    """
+    return type for count_over_time
+    """
     counts: List[Date]
 
 class Language(TypedDict):
+    """
+    list element in return value for languages method
+    """
     language: str
     value: int
     ratio: float                # really fraction?!
 
 class Source(TypedDict):
+    """
+    list element in return value for sources method
+    """
     source: str
     count: int
 
 class Term(TypedDict):
+    """
+    list element in return value for words method
+    """
     term: str
     count: int
     ratio: float                # really fraction?!

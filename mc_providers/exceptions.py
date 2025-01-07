@@ -13,8 +13,8 @@ class UnknownProviderException(ProviderException):
 
 
 class MissingRequiredValue(ProviderException):
-    def __init__(self, platform: str, keyword: str):
-        super().__init__("provider {} requires {}".format(platform, keyword))
+    def __init__(self, name: str, keyword: str):
+        super().__init__(f"provider {name} requires {keyword}")
 
 
 class QueryingEverythingUnsupportedQuery(ProviderException):
