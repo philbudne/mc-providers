@@ -64,7 +64,13 @@ def terms_without_stopwords(lang_code: str, text: str, remove_punctuation: bool 
         # no stopwords for this language, so just let them all through
         logger.info(f"No stopwords for {lang_code}")
         lang_stopwords = set()
+
+    # from https://github.com/mediacloud/backend/blob/master/apps/common/src/python/mediawords/languages/__init__.py#L128
+    # Normalize apostrophe so that "it’s" and "it's" get treated identically
+    text = text.replace("’", "'")
+
     if remove_punctuation:
+        # almost CERTAINLY too agressive!
         text = PUNCTUATION_RE.sub('', text)
     terms = text.split()
     ok_terms = [w.lower() for w in terms if w.lower() not in lang_stopwords]
