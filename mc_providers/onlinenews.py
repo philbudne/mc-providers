@@ -85,7 +85,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         counter_dict = dict(counter)
         results = [Date(date=date, timestamp=date.timestamp(), count=count) for date, count in counter_dict.items()]
         # Somehow the order of this list gets out of wack. Sorting before returning for the sake of testability
-        results.sorted(key=lambda x: x["timestamp"])
+        results.sort(key=lambda x: x["timestamp"])
         return CountOverTime(counts=results)
 
     
