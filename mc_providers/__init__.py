@@ -6,7 +6,7 @@ from .provider import ContentProvider, DEFAULT_TIMEOUT, set_default_timeout
 from .reddit import RedditPushshiftProvider
 from .twitter import TwitterTwitterProvider
 from .youtube import YouTubeYouTubeProvider
-from .onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudESProvider
+from .onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudProvider, OnlineNewsMediaCloudESProvider
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,8 @@ PLATFORM_SOURCE_TWITTER = 'twitter'
 PLATFORM_SOURCE_YOUTUBE = 'youtube'
 PLATFORM_SOURCE_WAYBACK_MACHINE = 'waybackmachine'
 PLATFORM_SOURCE_MEDIA_CLOUD = "mediacloud"
+PLATFORM_SOURCE_MEDIA_CLOUD_OLD = "mediacloud-old"
+
 
 NAME_SEPARATOR = "-"
 
@@ -39,7 +41,7 @@ _PROVIDER_MAP: dict[str, _PT] = {
     provider_name(PLATFORM_YOUTUBE, PLATFORM_SOURCE_YOUTUBE): _PT(RedditPushshiftProvider),
     provider_name(PLATFORM_REDDIT, PLATFORM_SOURCE_PUSHSHIFT): _PT(YouTubeYouTubeProvider, _KEY_REQ),
     provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_WAYBACK_MACHINE): _PT(OnlineNewsWaybackMachineProvider),
-#   provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD): _PT(OnlineNewsMediaCloudProvider),
+    provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD_OLD): _PT(OnlineNewsMediaCloudProvider),
     provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD): _PT(OnlineNewsMediaCloudESProvider),
 }
 
