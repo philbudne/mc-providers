@@ -273,27 +273,27 @@ class ContentProvider(ABC):
         """
         # 0. if kwarg passed, use it
         if kwval is not None: 
-            logger.info("%r kwval %s '%s'", self, variable, kwval)
+            logger.debug("%r kwval %s '%s'", self, variable, kwval)
             return kwval
 
         env_var = self._env_var(variable)
         try:
             # 1. Look for OBJ_NAME_VARIABLE env var, returns value if it exits.
             val = os.environ[env_var]
-            logger.info("%r env %s '%s'", self, env_var, val)
+            logger.debug("%r env %s '%s'", self, env_var, val)
             return val
         except KeyError:
             pass
 
         # 2. If (run-time) default value argument passed, return it.
         if default is not None:
-            logger.info("%r default %s '%s'", self, variable, default)
+            logger.debug("%r default %s '%s'", self, variable, default)
             return default
 
         try:
             # 3. Look for class member named "variable", if it exists, return value
             val = getattr(self, variable)
-            logger.info("%r class default %s '%s'", self, variable, val)
+            logger.debug("%r class default %s '%s'", self, variable, val)
             return val
         except AttributeError:
             pass
@@ -306,27 +306,27 @@ class ContentProvider(ABC):
         ugh: copy of _env_str
         """
         if kwval is not None:
-            logger.info("%r kwval %s %d", self, variable, kwval)
+            logger.debug("%r kwval %s %d", self, variable, kwval)
             return kwval
 
         env_var = self._env_var(variable)
         try:
             # 1. Look for OBJ_NAME_VARIABLE env var, returns value if it exits.
             val = int(os.environ[env_var])
-            logger.info("%r env %s %d", self, env_var, val)
+            logger.debug("%r env %s %d", self, env_var, val)
             return val
         except KeyError:
             pass
 
         # 2. If (run-time) default value argument passed, return it.
         if default is not None:
-            logger.info("%r default %s %d", self, variable, default)
+            logger.debug("%r default %s %d", self, variable, default)
             return default
 
         try:
             # 3. Look for class member named "variable", if it exists, return value
             val = getattr(self, variable)
-            logger.info("%r class default %s %d", self, variable, val)
+            logger.debug("%r class default %s %d", self, variable, val)
             return val
         except AttributeError:
             pass
