@@ -15,6 +15,7 @@ SUBMISSION_SEARCH_URL = "{}/reddit/submission/search".format(REDDIT_PUSHSHIFT_UR
 
 @deprecated
 class RedditPushshiftProvider(ContentProvider):
+    API_KEY = ""                # not required!
     BASE_URL = SUBMISSION_SEARCH_URL
 
     def __init__(self, **kwargs: Any):
