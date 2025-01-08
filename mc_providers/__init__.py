@@ -23,11 +23,11 @@ PLATFORM_SOURCE_YOUTUBE = 'youtube'
 PLATFORM_SOURCE_WAYBACK_MACHINE = 'waybackmachine'
 PLATFORM_SOURCE_MEDIA_CLOUD = "mediacloud"     # direct to elasticsearch
 PLATFORM_SOURCE_MEDIA_CLOUD_OLD = "mediacloud-old" # news-search-api based
+
 NAME_SEPARATOR = "-"
 
 def provider_name(platform: str, source: str) -> str:
     return platform + NAME_SEPARATOR + source
-
 
 # map provider name to class to instantiate.
 # if each class had PLATFORM_NAME and SOURCE_NAME members,
