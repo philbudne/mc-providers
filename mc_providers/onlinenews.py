@@ -39,9 +39,6 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
     MAX_QUERY_LENGTH = pow(2, 14)
 
-    # default values for constructor arguments
-    API_KEY = ""                # not required
-
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)
         self._client = self.get_client()
@@ -432,15 +429,14 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
     
-    INDEX_PREFIX = "mc_search"
+    DEFAULT_COLLECTION = os.environ.get(
+        "ELASTICSEARCH_INDEX_NAME_PREFIX", "mc_search") + "-*"
 
     def __init__(self, **kwargs: Any):
-        # maybe take comma separated list?
-        self._index_prefix = self._env_str(kwargs.pop("index_prefix", None), "INDEX_PREFIX") + "-*"
         super().__init__(**kwargs)
 
     def get_client(self):
-        api_client = MCSearchApiClient(collection=self._index_prefix, api_base_url=self._base_url)
+        api_client = MCSearchApiClient(collection=self.DEFAULT_COLLECTION, api_base_url=self._base_url)
         if self._timeout:
             api_client.TIMEOUT_SECS = self._timeout
         return api_client
@@ -872,7 +868,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         s = Search(index=self._index_from_dates(start_date, end_date), using=self._es)
 
-        if user_query.strip() != self.everything_query(): # not "*"?
+        if user_query.strip() != "*":
             s = s.query(SanitizedQueryString(query=user_query, default_field="text_content", default_operator="and"))
 
         if self._session_id:
@@ -886,17 +882,17 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             s = s.params(preference=self._session_id)
 
         # Evaluating selectors (domains/filters/url_search_strings) in "filter context";
-        # Supposed to be faster, and enable caching of document set.
+        # Supposed to be faster, and enable caching of which documents to look at.
         # https://www.elastic.co/guide/en/elasticsearch/reference/current/query-filter-context.html#filter-context
 
         # Try to apply filter with the smallest result set (most selective) first,
         # to cut down document set as soon as possible.
 
+        # could include languages (etc) here:
         days = (end_date - start_date).days + 1
         filters : list[FilterTuple] = [
             (days * self.DAY_WEIGHT, Range(publication_date={'gte': start, "lte": end})),
             self._selector_filter_tuple(kwargs)
-            # could include languages (etc) here
         ]
 
         # try applying more selective queries (fewer results) first
@@ -911,9 +907,6 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         else:
             return s.source(False) # no source fields in hits
 
-    def __repr__(self) -> str:
-        return "OnlineNewsMediaCloudESProvider"
-
     def _is_no_results(self, results: Overview) -> bool:
         """
         used to test _overview_query results
@@ -925,8 +918,10 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         return list of indices to search for a given date range.
         if indexing goes back to being split by publication_date (by year or quarter?)
         this could limit the number of shards that need to be queried
+
+        I
         """
-        return [self._index_prefix]
+        return [self.DEFAULT_COLLECTION]
 
     def _search(self, search: Search, profile: str | bool = False) -> Response:
         """
@@ -1067,7 +1062,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         res = self._search(s)
         hits = _get_hits(res)
         if not hits:
-            return {}
+            return {}           # XXX raise exception?
 
         # double conversion!
         return self._match_to_row(_format_match(hits[0], expanded))
@@ -1125,7 +1120,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         if len(hits) == page_size:
             # get paging token from first sort key of last item returned.
             # str() needed for dates, which are returned as integer milliseconds
-            new_pt = _b64_encode_page_token(str(hits[-1]["sort"][0]))
+            new_pt = _b64_encode_page_token(str(hits[-1].meta.sort[0]))
         else:
             new_pt = ""
 
@@ -1172,7 +1167,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         search = self._basic_search(query, start_date, end_date, **kwargs)\
                      .query(
                          FunctionScore(
-                             functions=[ # type: ignore[arg-type]
+                             functions=[
                                  RandomScore(
                                      # needed for 100% reproducibility:
                                      # seed=int, field="fieldname"
