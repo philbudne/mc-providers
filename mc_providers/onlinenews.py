@@ -1173,7 +1173,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         search = self._basic_search(query, start_date, end_date, **kwargs)\
                      .query(
                          FunctionScore(
-                             functions=[
+                             functions=[ # type: ignore[arg-type]
                                  RandomScore(
                                      # needed for 100% reproducibility:
                                      # seed=int, field="fieldname"
