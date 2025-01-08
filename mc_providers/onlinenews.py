@@ -252,7 +252,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         takes a query **kwargs dict and removes keys that
         are processed in this library, and should not be passed to clients.
         """
-        # remove Chunked?
+        kwargs.pop("chunk", None) # bool
         kwargs.pop("domains", None) # Iterable[str]
         kwargs.pop("filters", None) # Iterable[str]
         kwargs.pop("url_search_strings", None) # dict[str, Iterable[str]]
@@ -278,7 +278,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         """
         takes kwargs as *dict*, removes items that shouldn't be sent to _client
         """
-        chunk = kwargs.get("chunk", True)
+        chunk = kwargs.pop("chunk", True)
         queries = cls._assemble_and_chunk_query_str(base_query, chunk=chunk, **kwargs)
         cls._prune_kwargs(kwargs)
         return queries
@@ -436,11 +436,11 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
     def __init__(self, **kwargs: Any):
         # maybe take comma separated list?
-        self._index_prefix = self._env_str(kwargs.pop("index_prefix", None), "INDEX_PREFIX") + "-*"
+        self._index = self._env_str(kwargs.pop("index_prefix", None), "INDEX_PREFIX") + "-*"
         super().__init__(**kwargs)
 
     def get_client(self):
-        api_client = MCSearchApiClient(collection=self._index_prefix, api_base_url=self._base_url)
+        api_client = MCSearchApiClient(collection=self._index, api_base_url=self._base_url)
         if self._timeout:
             api_client.TIMEOUT_SECS = self._timeout
         return api_client
@@ -926,7 +926,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         if indexing goes back to being split by publication_date (by year or quarter?)
         this could limit the number of shards that need to be queried
         """
-        return [self._index_prefix]
+        return [self._index]
 
     def _search(self, search: Search, profile: str | bool = False) -> Response:
         """
@@ -1061,7 +1061,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     @CachingManager.cache()
     def item(self, item_id: str) -> Item:
         expanded = True         # always includes full_text!!
-        s = Search(index=self.DEFAULT_COLLECTION, using=self._es)\
+        s = Search(index=self._index, using=self._es)\
             .query(Match(_id=item_id))\
             .source(includes=self._fields(expanded)) 
         res = self._search(s)
