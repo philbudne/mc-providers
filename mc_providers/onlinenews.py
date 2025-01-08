@@ -1119,7 +1119,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         if len(hits) == page_size:
             # get paging token from first sort key of last item returned.
-            # str() needed for dates, which are returned as integer milliseconds
+            # str() needed for dates, which are returned as integer
             new_pt = _b64_encode_page_token(str(hits[-1].meta.sort[0]))
         else:
             new_pt = ""
