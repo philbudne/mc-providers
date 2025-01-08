@@ -432,14 +432,15 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
     
-    DEFAULT_COLLECTION = os.environ.get(
-        "ELASTICSEARCH_INDEX_NAME_PREFIX", "mc_search") + "-*"
+    INDEX_PREFIX = "mc_search"
 
     def __init__(self, **kwargs: Any):
+        # maybe take comma separated list?
+        self._index_prefix = self._env_str(kwargs.pop("index_prefix", None), "INDEX_PREFIX") + "-*"
         super().__init__(**kwargs)
 
     def get_client(self):
-        api_client = MCSearchApiClient(collection=self.DEFAULT_COLLECTION, api_base_url=self._base_url)
+        api_client = MCSearchApiClient(collection=self._index_prefix, api_base_url=self._base_url)
         if self._timeout:
             api_client.TIMEOUT_SECS = self._timeout
         return api_client
@@ -924,10 +925,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         return list of indices to search for a given date range.
         if indexing goes back to being split by publication_date (by year or quarter?)
         this could limit the number of shards that need to be queried
-
-        I
         """
-        return [self.DEFAULT_COLLECTION]
+        return [self._index_prefix]
 
     def _search(self, search: Search, profile: str | bool = False) -> Response:
         """
