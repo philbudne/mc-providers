@@ -105,8 +105,8 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
 
     def test_all_items(self):
         query = "trump"
-        start_date = dt.datetime(2024, 1, 10)
-        end_date = dt.datetime(2024, 1, 14)
+        start_date = dt.datetime(2024, 1, 12)
+        end_date = dt.datetime(2024, 1, 13)
         story_count = self._provider.count(query, start_date, end_date)
         # make sure test case is reasonable size (ie. more than one page, but not too many pages
         assert story_count > 0
@@ -317,7 +317,7 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
 
     def setUp(self):
         # this requires having a VPN tunnel open to the Media Cloud production ES
-        self._provider = provider_for(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD, base_url="http://localhost:9200", api_key="")
+        self._provider = provider_for(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD, base_url="http://localhost:9200", api_key="", index_prefix="mc_search")
 
     def test_expanded_story_list(self):
         query = "*"
@@ -394,7 +394,7 @@ class OnlineNewsMediaCloudOldProviderTest(OnlineNewsWaybackMachineProviderTest):
     def setUp(self):
         # this requires having a VPN tunnel open to the Media Cloud production
         self._provider = provider_for(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD_OLD, 
-                                        base_url="http://localhost:8100/v1/")
+                                        base_url="http://localhost:8000/v1/", api_key="", index_prefix="mc_search")
 
     def test_expanded_story_list(self):
         query = "*"
@@ -462,5 +462,8 @@ class OnlineNewsMediaCloudOldProviderTest(OnlineNewsWaybackMachineProviderTest):
         assert len(story['title']) > 0
         assert story['language'] == 'en'
         assert story['media_name'] == 'cnn.com'
+
+
+
 
 

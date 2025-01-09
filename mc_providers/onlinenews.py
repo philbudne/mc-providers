@@ -640,7 +640,6 @@ from elasticsearch_dsl.document_base import InstrumentedField
 from elasticsearch_dsl.function import RandomScore
 from elasticsearch_dsl.query import FunctionScore, Match, Range, Query, QueryString
 from elasticsearch_dsl.response import Hit
-#from elasticsearch_dsl.types import FunctionScoreContainer, SortOptions # not in 8.15
 from elasticsearch_dsl.utils import AttrDict
 
 from .language import terms_without_stopwords
@@ -653,11 +652,22 @@ _ES_MAXPAGE = 1000              # define globally (ie; in .providers)???
 # return value for _overview
 _EMPTY_OVERVIEW = Overview(query="", total=-1, topdomains={}, toplangs={}, dailycounts={}, matches=[])
 
-# pagination for paged_items()
-# was publication_date, but it's awful for pagination
-# (can only return a single page per day!)
-_DEF_PAGE_SORT_FIELD = "indexed_date"
+# pagination for paged_items() with just publication_date can only
+# return a single page per day and identical indexed_date values
+# (without fractional seconds?!)  have been seen in the wild
+# (2024-01-10, search on "trump" without any domains), but with
+# addition of a (good) secondary sort key either will work.  Setting
+# this to the empty string will sort on "secondary" key alone, but
+# using publication_date (in descending order) to try not to break
+# anything.
+_DEF_PAGE_SORT_FIELD = "publication_date"
 _DEF_PAGE_SORT_ORDER = "desc"
+
+# Using "_doc" (integer document id?) to break ties or as sole key if
+# "page_sort_field" argument not given and _DEF_PAGE_SORT_FIELD is
+# empty string (see above).  _doc is documented as most efficient sort key at:
+# https://www.elastic.co/guide/en/elasticsearch/reference/current/sort-search-results.html
+_SECONDARY_PAGE_SORT_ARGS = {"_doc": "asc"}
 
 def _sanitize(s: str) -> str:
     """
@@ -722,6 +732,9 @@ def _b64_encode_page_token(strng: str) -> str:
 def _b64_decode_page_token(strng: str) -> str:
     return base64.b64decode(strng.replace("~", "=").encode(), b"-_").decode()
 
+# used to concatenate multiple sort keys (before b64 encoding)
+_SORT_KEY_SEP = "\x01"          # unlikely to appear in data
+
 def _get_hits(res: Response) -> list[Hit]:
     """
     retrieve hits array from _search results.
@@ -778,6 +791,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
 
         self._profile: str | bool = kwargs.pop("profile", False)
+        self._profile_current_search: str | bool = False
 
         # total seconds from the last profiled query:
         self._last_elastic_ms = -1.0
@@ -865,12 +879,20 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         create a elasticsearch_dsl query from user_query, date range, and kwargs
         """
         # works for date or datetime! publication_date is just YYYY-MM-DD
-        start = start_date.strftime("%Y-%m-%dT00:00:00Z") # paranoia
-        end = end_date.strftime("%Y-%m-%d") # T23:59:59:999_999_999Z implied?
+        start = start_date.strftime("%Y-%m-%d")
+        end = end_date.strftime("%Y-%m-%d")
+
+        self._profile_current_search = kwargs.pop("profile", self._profile)
+
+        # check for extraneous arguments
+        self._check_kwargs(kwargs)
 
         s = Search(index=self._index_from_dates(start_date, end_date), using=self._es)
 
-        if user_query.strip() != "*":
+        if self._profile_current_search:
+            s = s.extra(profile=True)
+
+        if user_query.strip() != self.everything_query(): # not "*"?
             s = s.query(SanitizedQueryString(query=user_query, default_field="text_content", default_operator="and"))
 
         if self._session_id:
@@ -925,7 +947,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
         return [self._index]
 
-    def _search(self, search: Search, profile: str | bool = False) -> Response:
+    def _search(self, search: Search) -> Response:
         """
         one place to send queries to ES, for logging
         """
@@ -942,17 +964,13 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # basis. If set, it overrides the index-level setting"
             search = search.params(request_cache=False)
 
-        profile = profile or self._profile
-        if profile:
-            search = search.extra(profile=True)
-
         res = search.execute()
         elapsed = time.monotonic() - t0
-        logger.info("MC._search ES time %s ms (%.3f elapsed)",
+        logger.info("MC._search ES 'took' %s ms (%.3f elapsed)",
                     getattr(res, "took", -1), elapsed*1000)
 
-        if profile and (pdata := getattr(res, "profile", None)):
-            self._process_profile_data(pdata, profile)
+        if (pdata := getattr(res, "profile", None)):
+            self._process_profile_data(pdata)
 
         try:                    # look for circuit breaker trips, etc
             # Response.success() wants success,
@@ -979,12 +997,13 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # XXX raise Exception here??
         return res
 
-    def _process_profile_data(self, pdata: AttrDict, profile: str | bool) -> None:
+    def _process_profile_data(self, pdata: AttrDict) -> None:
         """
         digest profiling data
         """
-        if isinstance(profile, str): # filename prefix?
-            fname = time.strftime(f"{profile}-%Y-%m-%d-%H-%M-%S.json")
+        pcs = self._profile_current_search # set by _basic_search
+        if isinstance(pcs, str):  # filename prefix?
+            fname = time.strftime(f"{pss}-%Y-%m-%d-%H-%M-%S.json")
             with open(fname, "w") as f:
                 json.dump(pdata.to_dict(), f)
             logger.info("wrote profiling data to %s", fname)
@@ -1003,11 +1022,10 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                 agg_ns += agg.time_in_nanos
         es_nanos = query_ns + rewrite_ns + coll_ns + agg_ns
         self._last_elastic_ms = es_nanos / 1e6 # convert ns to ms
-        # XXX save components???
-
         logger.info("ES time: %.3f ms", self._last_elastic_ms)
 
         # avoid floating point divisions that are likely not displayed:
+        # XXX save components???
         logger.debug(" ES (ns) query: %d rewrite: %d, collectors: %d aggs: %d",
                      query_ns, rewrite_ns, coll_ns, agg_ns)
 
@@ -1026,16 +1044,13 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         AGG_LANG = "toplangs"
         AGG_DOMAIN = "topdomains"
 
-        profile = kwargs.pop("profile", None)
-        self._check_kwargs(kwargs)
-
         search = self._basic_search(q, start_date, end_date, **kwargs)
         search.aggs.bucket(AGG_DAILY, "date_histogram", field="publication_date",
                            calendar_interval="day", min_doc_count=1)
         search.aggs.bucket(AGG_LANG, "terms", field="language.keyword", size=100)
         search.aggs.bucket(AGG_DOMAIN, "terms", field="canonical_domain", size=100)
         search = search.extra(track_total_hits=True)
-        res = self._search(search, profile=profile) # run search
+        res = self._search(search) # run search
         hits = _get_hits(res)   # get hits list
         if not hits:
             return _EMPTY_OVERVIEW # checked by _is_no_results
@@ -1091,38 +1106,40 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         page_sort_order = kwargs.pop("page_sort_order", _DEF_PAGE_SORT_ORDER)
         pagination_token = kwargs.pop("pagination_token", None)
 
-        if page_sort_field not in self._fields(expanded):
-            raise ValueError(page_sort_field)
+        sort_opts = []
+        if page_sort_field:
+            # XXX maybe only allow mapped fields??!!
+            if page_sort_field not in self._fields(expanded):
+                raise ValueError(page_sort_field)
+            if page_sort_order not in ["asc", "desc"]:
+                raise ValueError(page_sort_order)
+            sort_opts.append({page_sort_field: page_sort_order})
 
-        if page_sort_order not in ["asc", "desc"]:
-            raise ValueError(page_sort_order)
-
-        profile = kwargs.pop("profile", None)
-        self._check_kwargs(kwargs)
-
-        # XXX types.SortOptions (not in 8.15.4)
-        sort_opts = {page_sort_field: page_sort_order}
+        # see discussion above at _SECONDARY_PAGE_SORT_ARGS declaration
+        sort_opts.append(_SECONDARY_PAGE_SORT_ARGS)
 
         search = self._basic_search(query, start_date, end_date, expanded=expanded, **kwargs)\
                      .extra(size=page_size, track_total_hits=True)\
-                     .sort(sort_opts)
+                     .sort(*sort_opts)
 
         if pagination_token:
+            # may return multiple keys:
+            after = _b64_decode_page_token(pagination_token).split(_SORT_KEY_SEP)
+
             # important to use `search_after` instead of 'from' for
             # memory reasons related to paging through more than 10k
             # results.
-            after = [_b64_decode_page_token(pagination_token)] # list of keys
             search = search.extra(search_after=after)
 
-        res = self._search(search, profile=profile)
+        res = self._search(search)
         hits = _get_hits(res)
         if not hits:
             return ([], "")
 
         if len(hits) == page_size:
-            # get paging token from first sort key of last item returned.
-            # str() needed for dates, which are returned as integer
-            new_pt = _b64_encode_page_token(str(hits[-1].meta.sort[0]))
+            # generate paging token from all sort keys of last item:
+            new_pt = _b64_encode_page_token(
+                _SORT_KEY_SEP.join([str(key) for key in hits[-1].meta.sort]))
         else:
             new_pt = ""
 
@@ -1157,9 +1174,6 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
               **kwargs: Any) -> list[Term]:
 
         remove_punctuation = bool(kwargs.pop("remove_punctuation", True)) # XXX TEMP?
-        profile = kwargs.pop("profile", None)
-        self._check_kwargs(kwargs)
-
         text_field = "article_title"
 
         # https://github.com/elastic/elasticsearch-dsl-py/issues/1369
@@ -1180,7 +1194,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                      .source([text_field, "language"])\
                      .extra(size=self.WORDS_SAMPLE)
 
-        search_results = self._search(search, profile=profile)
+        search_results = self._search(search)
         hits = _get_hits(search_results)
         if not hits:
             return []
