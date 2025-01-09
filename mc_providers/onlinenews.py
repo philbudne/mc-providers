@@ -665,9 +665,10 @@ _EMPTY_OVERVIEW = Overview(query="", total=-1, topdomains={}, toplangs={}, daily
 _DEF_PAGE_SORT_FIELD = "publication_date"
 _DEF_PAGE_SORT_ORDER = "desc"
 
-# Using "_doc" (integer document id?) to break ties or as sole key if
-# "page_sort_field" argument not given and _DEF_PAGE_SORT_FIELD is
-# empty string (see above).  _doc is documented as most efficient sort key at:
+# Secondary sort key to break ties if page_sort_field is non-empty.
+# Used as sole sort key if "page_sort_field" argument or
+# _DEF_PAGE_SORT_FIELD (above) is empty string.
+# _doc is documented as most efficient sort key at:
 # https://www.elastic.co/guide/en/elasticsearch/reference/current/sort-search-results.html
 _SECONDARY_PAGE_SORT_ARGS = {"_doc": "asc"}
 
