@@ -462,8 +462,3 @@ class OnlineNewsMediaCloudOldProviderTest(OnlineNewsWaybackMachineProviderTest):
         assert len(story['title']) > 0
         assert story['language'] == 'en'
         assert story['media_name'] == 'cnn.com'
-
-
-
-
-
