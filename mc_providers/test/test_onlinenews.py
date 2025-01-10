@@ -105,8 +105,8 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
 
     def test_all_items(self):
         query = "trump"
-        start_date = dt.datetime(2024, 1, 12)
-        end_date = dt.datetime(2024, 1, 13)
+        start_date = dt.datetime(2024, 1, 9)
+        end_date = dt.datetime(2024, 1, 11)
         story_count = self._provider.count(query, start_date, end_date)
         # make sure test case is reasonable size (ie. more than one page, but not too many pages
         assert story_count > 0

@@ -38,6 +38,9 @@ class OnlineNewsAbstractProvider(ContentProvider):
     """
 
     MAX_QUERY_LENGTH = pow(2, 14)
+    
+    # default values for constructor arguments
+    API_KEY = ""                # not required
 
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)
@@ -429,8 +432,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
     
-    DEFAULT_COLLECTION = os.environ.get(
-        "ELASTICSEARCH_INDEX_NAME_PREFIX", "mc_search") + "-*"
+    INDEX_PREFIX = "mc_search"
 
     def __init__(self, **kwargs: Any):
         # maybe take comma separated list?
@@ -906,17 +908,17 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             s = s.params(preference=self._session_id)
 
         # Evaluating selectors (domains/filters/url_search_strings) in "filter context";
-        # Supposed to be faster, and enable caching of which documents to look at.
+        # Supposed to be faster, and enable caching of document set.
         # https://www.elastic.co/guide/en/elasticsearch/reference/current/query-filter-context.html#filter-context
 
         # Try to apply filter with the smallest result set (most selective) first,
         # to cut down document set as soon as possible.
 
-        # could include languages (etc) here:
         days = (end_date - start_date).days + 1
         filters : list[FilterTuple] = [
             (days * self.DAY_WEIGHT, Range(publication_date={'gte': start, "lte": end})),
             self._selector_filter_tuple(kwargs)
+            # could include languages (etc) here
         ]
 
         # try applying more selective queries (fewer results) first
@@ -931,6 +933,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         else:
             return s.source(False) # no source fields in hits
 
+    def __repr__(self) -> str:
+        return "OnlineNewsMediaCloudESProvider"
+
     def _is_no_results(self, results: Overview) -> bool:
         """
         used to test _overview_query results
@@ -942,8 +947,6 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         return list of indices to search for a given date range.
         if indexing goes back to being split by publication_date (by year or quarter?)
         this could limit the number of shards that need to be queried
-
-        I
         """
         return [self._index]
 
@@ -1183,7 +1186,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         search = self._basic_search(query, start_date, end_date, **kwargs)\
                      .query(
                          FunctionScore(
-                             functions=[
+                             functions=[ # type: ignore[arg-type]
                                  RandomScore(
                                      # needed for 100% reproducibility:
                                      # seed=int, field="fieldname"
