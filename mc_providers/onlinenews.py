@@ -38,7 +38,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     """
 
     MAX_QUERY_LENGTH = pow(2, 14)
-    
+
     # default values for constructor arguments
     API_KEY = ""                # not required
 
@@ -1082,7 +1082,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         res = self._search(s)
         hits = _get_hits(res)
         if not hits:
-            return {}           # XXX raise exception?
+            return {}
 
         # double conversion!
         return self._match_to_row(_format_match(hits[0], expanded))
