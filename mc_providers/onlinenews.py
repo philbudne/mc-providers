@@ -654,15 +654,10 @@ _ES_MAXPAGE = 1000              # define globally (ie; in .providers)???
 # return value for _overview
 _EMPTY_OVERVIEW = Overview(query="", total=-1, topdomains={}, toplangs={}, dailycounts={}, matches=[])
 
-# pagination for paged_items() with just publication_date can only
-# return a single page per day and identical indexed_date values
-# (without fractional seconds?!)  have been seen in the wild
-# (2024-01-10, search on "trump" without any domains), but with
-# addition of a (good) secondary sort key either will work.  Setting
-# this to the empty string will sort on "secondary" key alone, but
-# using publication_date (in descending order) to try not to break
-# anything.
-_DEF_PAGE_SORT_FIELD = "publication_date"
+# Was publication_date, but web-search always passes indexed_date.
+# identical indexed_date values (without fractional seconds?!)  have
+# been seen in the wild (entire day 2024-01-10).
+_DEF_PAGE_SORT_FIELD = "indexed_date"
 _DEF_PAGE_SORT_ORDER = "desc"
 
 # Secondary sort key to break ties if page_sort_field is non-empty.
@@ -670,12 +665,24 @@ _DEF_PAGE_SORT_ORDER = "desc"
 # _DEF_PAGE_SORT_FIELD (above) is empty string.
 # _doc is documented as most efficient sort key at:
 # https://www.elastic.co/guide/en/elasticsearch/reference/current/sort-search-results.html
+#
+# But at
+# https://www.elastic.co/guide/en/elasticsearch/reference/current/paginate-search-results.html
+#   "Elasticsearch uses Lucene’s internal doc IDs as tie-breakers. These
+#   internal doc IDs can be completely different across replicas of the
+#   same data. When paging search hits, you might occasionally see that
+#   documents with the same sort values are not ordered consistently."
+#
+# HOWEVER: use of session_id/preference should route all requests
+# from the same session to the same shards for each successive query.
 _SECONDARY_PAGE_SORT_ARGS = {"_doc": "asc"}
 
 def _sanitize(s: str) -> str:
     """
     quote slashes to avoid interpretation as /regexp/
     as done by _sanitize_es_query in mc_providers/mediacloud.py client library
+
+    should only be used by SanitizedQueryString!
     """
     return s.replace("/", r"\/")
 
@@ -685,7 +692,6 @@ class SanitizedQueryString(QueryString):
     """
     def __init__(self, query: str, **kwargs: Any):
         super().__init__(query=_sanitize(query), **kwargs)
-
 
 def _format_match(hit: Hit, expanded: bool = False) -> dict:
     """
@@ -717,7 +723,6 @@ def _format_day_counts(bucket: list) -> Counts:
     """
     return {item["key_as_string"][:10]: item["doc_count"] for item in bucket}
 
-
 def _format_counts(bucket: list) -> Counts:
     """
     from news-search-api/client.py EsClientWrapper.format_count
@@ -735,25 +740,29 @@ def _b64_encode_page_token(strng: str) -> str:
 def _b64_decode_page_token(strng: str) -> str:
     return base64.b64decode(strng.replace("~", "=").encode(), b"-_").decode()
 
-# used to concatenate multiple sort keys (before b64 encoding)
-_SORT_KEY_SEP = "\x01"          # unlikely to appear in data
+# Used to concatenate multiple sort keys (before b64 encoding) and split
+# after b64 decode.  Must not appear in key values!  Can be multi-character
+# string to lower likelihood of appearing (default keys are numeric).
+_SORT_KEY_SEP = "\x01"
 
 def _get_hits(res: Response) -> list[Hit]:
     """
     retrieve hits array from _search results.
     currently called after all _search() calls
     """
+    # _search method will have already logged any failed shards.
     # Response.success() wants
     # `self._shards.total == self._shards.successful and not self.timed_out`
-    # _search method will have already logged any failed shards.
     if not res.success():
-        logger.warn("res.success() is False!") # XXX raise an Exception???
+        # XXX raise an Exception with useful error message?
+        logger.warn("res.success() is False!")
         return []
 
     try:
         return res.hits
     except AttributeError:
-        logger.warn("failed to get res.hits!") # XXX raise an Exception?
+        # XXX raise an Exception with useful error message?
+        logger.warn("failed to get res.hits!")
         return []
 
 class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
@@ -958,9 +967,12 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         logger.debug("MC._search %r", search.to_dict())
 
         t0 = time.monotonic()
+        execute_args = {}
         if self._caching < 0:
             # Here to try to force ES not to use cached results (for testing).
-            # .execute(ignore_cache=True) only effects in-library caching.
+            # Only effects in-library caching:
+            execute_args["ignore_cache"] = True
+
             # This puts ?request_cache=false on the request URL, which
             # https://www.elastic.co/guide/en/elasticsearch/reference/current/shard-request-cache.html
             # says "The request_cache query-string parameter can be
@@ -968,20 +980,15 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # basis. If set, it overrides the index-level setting"
             search = search.params(request_cache=False)
 
-        res = search.execute()
+        res = search.execute(**execute_args)
         elapsed = time.monotonic() - t0
-        logger.info("MC._search ES 'took' %s ms (%.3f elapsed)",
+        logger.info("MC._search ES took %s ms (%.3f elapsed)",
                     getattr(res, "took", -1), elapsed*1000)
 
         if (pdata := getattr(res, "profile", None)):
-            self._process_profile_data(pdata)
+            self._process_profile_data(pdata)  # displays ES total time
 
         try:                    # look for circuit breaker trips, etc
-            # Response.success() wants success,
-            # self._shards.total == self._shards.successful and not self.timed_out
-            # because of circuit breaker trips in aggregation based top words,
-            # had to let errors thru, but with sample based top words,
-            # reconsider?!
             shards = res._shards
             if shards:
                 failed = shards.failed
@@ -1001,13 +1008,20 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # XXX raise Exception here??
         return res
 
+    def _search_hits(self, search: Search) -> list[Hit]:
+        """
+        perform search, return list of Hit
+        """
+        res = self._search(search)
+        return _get_hits(res)
+
     def _process_profile_data(self, pdata: AttrDict) -> None:
         """
         digest profiling data
         """
-        pcs = self._profile_current_search # set by _basic_search
+        pcs = self._profile_current_search # saved by _basic_search
         if isinstance(pcs, str):  # filename prefix?
-            fname = time.strftime(f"{pss}-%Y-%m-%d-%H-%M-%S.json")
+            fname = time.strftime(f"{pcs}-%Y-%m-%d-%H-%M-%S.json")
             with open(fname, "w") as f:
                 json.dump(pdata.to_dict(), f)
             logger.info("wrote profiling data to %s", fname)
@@ -1043,7 +1057,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         logger.debug("MC._overview %s %s %s %r", q, start_date, end_date, kwargs)
 
         # these are arbitrary, but match news-search-api/client.py
-        # so that top-queries.py can recognize this is an overview query:
+        # so that es-tools/mc-es-top.py can recognize this is an overview query:
         AGG_DAILY = "dailycounts"
         AGG_LANG = "toplangs"
         AGG_DOMAIN = "topdomains"
@@ -1061,8 +1075,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         # res.hits.total.value documented at
         # https://elasticsearch-dsl.readthedocs.io/en/stable/search_dsl.html#response
-        # but mypy complains
-        total = res["hits"]["total"]["value"]
+        total = res.hits.total.value # type: ignore[attr-defined]
         aggs = res.aggregations
 
         return Overview(
@@ -1080,8 +1093,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         s = Search(index=self._index, using=self._es)\
             .query(Match(_id=item_id))\
             .source(includes=self._fields(expanded)) 
-        res = self._search(s)
-        hits = _get_hits(res)
+        hits = self._search_hits(s)
         if not hits:
             return {}
 
@@ -1110,17 +1122,18 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         page_sort_order = kwargs.pop("page_sort_order", _DEF_PAGE_SORT_ORDER)
         pagination_token = kwargs.pop("pagination_token", None)
 
-        sort_opts = []
-        if page_sort_field:
-            # XXX maybe only allow mapped fields??!!
-            if page_sort_field not in self._fields(expanded):
-                raise ValueError(page_sort_field)
-            if page_sort_order not in ["asc", "desc"]:
-                raise ValueError(page_sort_order)
-            sort_opts.append({page_sort_field: page_sort_order})
+        # NOTE! depends on client limiting to reasonable choices!!
+        # (full text might leak data, or causes memory exhaustion!)
+        if page_sort_field not in self._fields(expanded):
+            raise ValueError(page_sort_field)
+        if page_sort_order not in ["asc", "desc"]:
+            raise ValueError(page_sort_order)
 
         # see discussion above at _SECONDARY_PAGE_SORT_ARGS declaration
-        sort_opts.append(_SECONDARY_PAGE_SORT_ARGS)
+        sort_opts = [
+            {page_sort_field: page_sort_order},
+            _SECONDARY_PAGE_SORT_ARGS
+        ]
 
         search = self._basic_search(query, start_date, end_date, expanded=expanded, **kwargs)\
                      .extra(size=page_size, track_total_hits=True)\
@@ -1135,8 +1148,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # results.
             search = search.extra(search_after=after)
 
-        res = self._search(search)
-        hits = _get_hits(res)
+        hits = self._search_hits(search)
         if not hits:
             return ([], "")
 
@@ -1180,10 +1192,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         remove_punctuation = bool(kwargs.pop("remove_punctuation", True)) # XXX TEMP?
         text_field = "article_title"
 
+        # from https://github.com/csinchok/django-bulbs/blob/1ba8f0c95502f952d01617188e947346959a7e30/bulbs/content/search.py#L8
+        # elasticsearch_dsl v8.17 gives mypy error, reported as
         # https://github.com/elastic/elasticsearch-dsl-py/issues/1369
-        # https://github.com/csinchok/django-bulbs/blob/1ba8f0c95502f952d01617188e947346959a7e30/bulbs/content/search.py#L2
-
-        # elasticsearch_dsl v8.17 gives mypy error:
         search = self._basic_search(query, start_date, end_date, **kwargs)\
                      .query(
                          FunctionScore(
@@ -1198,8 +1209,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                      .source([text_field, "language"])\
                      .extra(size=self.WORDS_SAMPLE)
 
-        search_results = self._search(search)
-        hits = _get_hits(search_results)
+        hits = self._search_hits(search)
         if not hits:
             return []
 
