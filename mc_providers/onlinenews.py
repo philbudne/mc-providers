@@ -354,6 +354,7 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
     """
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
+    BASE_URL = ""               # SearchApiClient has default
 
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)  # will call get_client
@@ -431,7 +432,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     Provider interface to access new mediacloud-news-search archive. 
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
-    
+    BASE_URL = "http://ramos.angwin:8000/v1/"
     INDEX_PREFIX = "mc_search"
 
     def __init__(self, **kwargs: Any):
@@ -786,8 +787,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     been detected earlier.
     """
 
-    WORDS_SAMPLE = 5000
     BASE_URL = "http://ramos.angwin:9200,http://woodward.angwin:9200,http://bradley.angwin:9200"
+    WORDS_SAMPLE = 5000
 
     def __init__(self, **kwargs: Any):
         """
