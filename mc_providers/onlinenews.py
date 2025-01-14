@@ -574,11 +574,12 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         else:
             rows = self._matches_to_rows(results['matches'])
         logger.debug("MC.sample: %d rows", len(rows))
-        return rows
+        return rows             # could slice w/ [:limit]!
 
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
                   **kwargs: Any) -> List[Language]:
         logger.debug("MC.languages %s %s %s %r", query, start_date, end_date, kwargs)
+        kwargs.pop("sample_size", None)
         results = self._overview_query(query, start_date, end_date, **kwargs)
         if self._is_no_results(results):
             return []

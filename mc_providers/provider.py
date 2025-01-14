@@ -221,9 +221,11 @@ class ContentProvider(ABC):
         results = [Language(language=w, value=c, ratio=c/sampled_count) for w, c in counts.most_common(limit)]
         return results
 
-    # default helper for _sampled_title_words
     def _sample_titles(self, query: str, start_date: dt.datetime, end_date: dt.datetime, sample_size: int,
                              **kwargs: Any) -> Iterable[list[dict[str,str]]]:
+        """
+        default helper for _sampled_title_words: return a sampling of stories for top words
+        """
         # XXX force sort on something non-chronological???
         return self.all_items(query, start_date, end_date, limit=sample_size)
 
