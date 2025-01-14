@@ -5,7 +5,7 @@ import logging
 import os
 import re
 from abc import ABC
-from typing import Any, Generator, NoReturn, TypeAlias, TypedDict
+from typing import Any, Generator, Iterable, NoReturn, TypeAlias, TypedDict
 from operator import itemgetter
 
 from .exceptions import MissingRequiredValue, QueryingEverythingUnsupportedQuery
@@ -221,17 +221,25 @@ class ContentProvider(ABC):
         results = [Language(language=w, value=c, ratio=c/sampled_count) for w, c in counts.most_common(limit)]
         return results
 
+    # default helper for _sampled_title_words
+    def _sample_titles(self, query: str, start_date: dt.datetime, end_date: dt.datetime, sample_size: int,
+                             **kwargs: Any) -> Iterable[list[dict[str,str]]]:
+        # XXX force sort on something non-chronological???
+        return self.all_items(query, start_date, end_date, limit=sample_size)
+
     # use this if you need to sample some content for top words
     def _sampled_title_words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                              **kwargs: Any) -> list[Term]:
         # support sample_size kwarg
-        sample_size = kwargs['sample_size'] if 'sample_size' in kwargs else self.WORDS_SAMPLE
+        sample_size = kwargs.pop('sample_size', self.WORDS_SAMPLE)
+        remove_punctuation = bool(kwargs.pop("remove_punctuation", True)) # XXX TEMP?
+
         # grab a sample and count terms as we page through it
         sampled_count = 0
         counts: collections.Counter = collections.Counter()
-        for page in self.all_items(query, start_date, end_date, limit=sample_size):
+        for page in self._sample_titles(query, start_date, end_date, sample_size, **kwargs):
             sampled_count += len(page)
-            [counts.update(terms_without_stopwords(t['language'], t['title'])) for t in page]
+            [counts.update(terms_without_stopwords(t['language'], t['title'], remove_punctuation)) for t in page]
         # clean up results
         results = [Term(term=w, count=c, ratio=c/sampled_count) for w, c in counts.most_common(limit)]
         return results

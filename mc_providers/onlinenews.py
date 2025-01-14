@@ -4,7 +4,7 @@ import logging
 import os
 import random
 from collections import Counter
-from typing import Any, Dict, List, Mapping, Optional, Sequence, TypeAlias, TypedDict
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, TypeAlias, TypedDict
 
 # PyPI
 import ciso8601
@@ -1185,48 +1185,37 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             if not next_page_token:
                 break
 
-    def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
-              limit: int = 100, # number of top words to return
-              **kwargs: Any) -> list[Term]:
-
-        remove_punctuation = bool(kwargs.pop("remove_punctuation", True)) # XXX TEMP?
-        text_field = "article_title"
-
-        # from https://github.com/csinchok/django-bulbs/blob/1ba8f0c95502f952d01617188e947346959a7e30/bulbs/content/search.py#L8
-        # elasticsearch_dsl v8.17 gives mypy error, reported as
-        # https://github.com/elastic/elasticsearch-dsl-py/issues/1369
+    def _sample_titles(self, query: str, start_date: dt.datetime, end_date: dt.datetime, sample_size: int,
+                             **kwargs: Any) -> Iterable[list[dict[str,str]]]:
+        """
+        helper for generic Provider._sampled_title_words;
+        returns a single page with entire sample_size of dicts
+        """
         search = self._basic_search(query, start_date, end_date, **kwargs)\
                      .query(
                          FunctionScore(
+                             # elasticsearch_dsl v8.17 gives mypy error, bug reported as
+                             # https://github.com/elastic/elasticsearch-dsl-py/issues/1369
+                             # PLEASE REMOVE THIS COMMENT WHEN THE IGNORE BELOW BECOMES UNNECESSARY!
                              functions=[ # type: ignore[arg-type]
                                  RandomScore(
-                                     # needed for 100% reproducibility:
+                                     # needed for 100% reproducibility (ie; if paging results)
                                      # seed=int, field="fieldname"
                                  )
                              ]
                          )
                      )\
-                     .source([text_field, "language"])\
-                     .extra(size=self.WORDS_SAMPLE)
+                     .source(["article_title", "language"])\
+                     .extra(size=sample_size) # everything in one query
 
         hits = self._search_hits(search)
-        if not hits:
-            return []
+        ret = [{"title": hit.article_title, "language": hit.language} for hit in hits]
+        return [ret]            # single page
 
-        sampled_count = 0
-        counts: Counter[str] = Counter()
-        t0 = time.monotonic()
-        for hit in hits:
-            sampled_count += 1
-            counts.update(
-                terms_without_stopwords(hit["language"],
-                                        hit[text_field], remove_punctuation))
-
-        # normalize and format results
-        results = [Term(term=w, count=c, ratio=c/sampled_count)
-                   for w, c in counts.most_common(limit)]
-
-        # majority of time spent processing when processing full text!!!
-        logger.info("ES.words processing time %.3f ms", (time.monotonic() - t0) * 1000)
-
-        return results
+    def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
+                             **kwargs: Any) -> list[Term]:
+        """
+        uses generic Provider._sampled_title_words
+        with data from local helper above
+        """
+        return self._sampled_title_words(query, start_date, end_date, limit=limit, **kwargs)
