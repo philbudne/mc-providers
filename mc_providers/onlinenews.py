@@ -659,12 +659,12 @@ _EMPTY_OVERVIEW = Overview(query="", total=-1, topdomains={}, toplangs={}, daily
 # Was publication_date, but web-search always passes indexed_date.
 # identical indexed_date values (without fractional seconds?!)  have
 # been seen in the wild (entire day 2024-01-10).
-_DEF_PAGE_SORT_FIELD = "indexed_date"
-_DEF_PAGE_SORT_ORDER = "desc"
+_DEF_SORT_FIELD = "indexed_date"
+_DEF_SORT_ORDER = "desc"
 
-# Secondary sort key to break ties if page_sort_field is non-empty.
-# Used as sole sort key if "page_sort_field" argument or
-# _DEF_PAGE_SORT_FIELD (above) is empty string.
+# Secondary sort key to break ties if sort_field is non-empty.
+# Used as sole sort key if "sort_field" argument or
+# _DEF_SORT_FIELD (above) is empty string.
 # _doc is documented as most efficient sort key at:
 # https://www.elastic.co/guide/en/elasticsearch/reference/current/sort-search-results.html
 #
@@ -677,7 +677,7 @@ _DEF_PAGE_SORT_ORDER = "desc"
 #
 # HOWEVER: use of session_id/preference should route all requests
 # from the same session to the same shards for each successive query.
-_SECONDARY_PAGE_SORT_ARGS = {"_doc": "asc"}
+_SECONDARY_SORT_ARGS = {"_doc": "asc"}
 
 def _sanitize(s: str) -> str:
     """
@@ -1120,21 +1120,21 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         page_size = min(page_size, _ES_MAXPAGE)
         expanded = kwargs.pop("expanded", False)
-        page_sort_field = kwargs.pop("page_sort_field", _DEF_PAGE_SORT_FIELD)
-        page_sort_order = kwargs.pop("page_sort_order", _DEF_PAGE_SORT_ORDER)
+        sort_field = kwargs.pop("sort_field", _DEF_SORT_FIELD)
+        sort_order = kwargs.pop("sort_order", _DEF_SORT_ORDER)
         pagination_token = kwargs.pop("pagination_token", None)
 
         # NOTE! depends on client limiting to reasonable choices!!
         # (full text might leak data, or causes memory exhaustion!)
-        if page_sort_field not in self._fields(expanded):
-            raise ValueError(page_sort_field)
-        if page_sort_order not in ["asc", "desc"]:
-            raise ValueError(page_sort_order)
+        if sort_field not in self._fields(expanded):
+            raise ValueError(sort_field)
+        if sort_order not in ["asc", "desc"]:
+            raise ValueError(sort_order)
 
-        # see discussion above at _SECONDARY_PAGE_SORT_ARGS declaration
+        # see discussion above at _SECONDARY_SORT_ARGS declaration
         sort_opts = [
-            {page_sort_field: page_sort_order},
-            _SECONDARY_PAGE_SORT_ARGS
+            {sort_field: sort_order},
+            _SECONDARY_SORT_ARGS
         ]
 
         search = self._basic_search(query, start_date, end_date, expanded=expanded, **kwargs)\
