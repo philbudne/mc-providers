@@ -1,12 +1,12 @@
 import logging
-from typing import List, Optional
+from typing import Any, List, NamedTuple, Optional
 
-from .exceptions import UnknownProviderException, UnavailableProviderException, APIKeyRequired
-from .provider import ContentProvider
+from .exceptions import UnknownProviderException, MissingRequiredValue
+from .provider import ContentProvider, DEFAULT_TIMEOUT, set_default_timeout
 from .reddit import RedditPushshiftProvider
 from .twitter import TwitterTwitterProvider
 from .youtube import YouTubeYouTubeProvider
-from .onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudProvider
+from .onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudProvider, OnlineNewsMediaCloudESProvider
 
 logger = logging.getLogger(__name__)
 
@@ -21,80 +21,88 @@ PLATFORM_SOURCE_PUSHSHIFT = 'pushshift'
 PLATFORM_SOURCE_TWITTER = 'twitter'
 PLATFORM_SOURCE_YOUTUBE = 'youtube'
 PLATFORM_SOURCE_WAYBACK_MACHINE = 'waybackmachine'
-PLATFORM_SOURCE_MEDIA_CLOUD = "mediacloud"
+PLATFORM_SOURCE_MEDIA_CLOUD = "mediacloud"     # direct to elasticsearch
+PLATFORM_SOURCE_MEDIA_CLOUD_OLD = "mediacloud-old" # news-search-api based
 
 NAME_SEPARATOR = "-"
-
-DEFAULT_TIMEOUT = 60  # to be used across all the providers; override via one-time call to set_default_timeout
-
-
-def set_default_timeout(timeout: int):
-    global DEFAULT_TIMEOUT
-    DEFAULT_TIMEOUT = timeout
-
 
 def provider_name(platform: str, source: str) -> str:
     return platform + NAME_SEPARATOR + source
 
+# map provider name to class to instantiate.
+# if each class had PLATFORM_NAME and SOURCE_NAME members,
+# this map could ve constructed from just a list of classes.
+_PROVIDER_MAP: dict[str, type[ContentProvider]] = {
+    provider_name(PLATFORM_TWITTER, PLATFORM_SOURCE_TWITTER): TwitterTwitterProvider,
+    provider_name(PLATFORM_YOUTUBE, PLATFORM_SOURCE_YOUTUBE): RedditPushshiftProvider,
+    provider_name(PLATFORM_REDDIT, PLATFORM_SOURCE_PUSHSHIFT): YouTubeYouTubeProvider,
+    provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_WAYBACK_MACHINE): OnlineNewsWaybackMachineProvider,
+    provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD_OLD): OnlineNewsMediaCloudProvider,
+    provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD): OnlineNewsMediaCloudESProvider,
+}
+
+_PROVIDER_NAMES: List[str] = list(_PROVIDER_MAP.keys())
 
 def available_provider_names() -> List[str]:
-    return [
-        provider_name(PLATFORM_TWITTER, PLATFORM_SOURCE_TWITTER),
-        provider_name(PLATFORM_YOUTUBE, PLATFORM_SOURCE_YOUTUBE),
-        provider_name(PLATFORM_REDDIT, PLATFORM_SOURCE_PUSHSHIFT),
-        provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_WAYBACK_MACHINE),
-        provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD)
-    ]
+    # called from frontend/index.html view, so pre-calculated
+    return _PROVIDER_NAMES
+
+def provider_for(platform: str, source: str,
+                 api_key: Optional[str] = None,
+                 base_url: Optional[str] = None,
+                 timeout: Optional[int] = None,
+                 caching: int = 1,
+                 # PLEASE do not add any new parameters here!
+                 # See provider_by_name "NOTE!" comment below
+                 **kwargs: Any) -> ContentProvider:
+    """
+    :param platform: One of the PLATFORM_* constants above.
+    :param source: One of the PLATFORM_SOURCE_* constants above.
+
+    see provider_by_name for kwargs
+    """
+    return provider_by_name(provider_name(platform, source),
+                            api_key, base_url, timeout, caching, **kwargs)
 
 
-def provider_by_name(name: str, api_key: Optional[str], base_url: Optional[str],
+def provider_by_name(name: str,
+                     # NOTE! the named parameters below ONLY
+                     # persist to maintain type signature compatibility
+                     # with existing code that passes parameters by position!
+                     # PLEASE do not add any new parameters here!
+                     api_key: Optional[str] = None,
+                     base_url: Optional[str] = None,
                      timeout: Optional[int] = None,
-                     caching: bool = True) -> ContentProvider:
-    parts = name.split(NAME_SEPARATOR)
-    return provider_for(parts[0], parts[1], api_key, base_url, timeout=timeout, caching=caching)
-
-
-def provider_for(platform: str, source: str, api_key: Optional[str], base_url: Optional[str],
-                 timeout: Optional[int] = None, caching: bool = True) -> ContentProvider:
+                     caching: int = 1,
+                     # New parameters should ONLY be added to Provider
+                     # constructors.  Parameters that apply to all providers
+                     # should be added to ContentProvider.__init__
+                     **kwargs: Any) -> ContentProvider:
     """
     A factory method that returns the appropriate data provider. Throws an exception to let you know if the
-    arguments are unsupported.
-    :param platform: One of the PLATFORM_* constants above.
-    :param source: One of the PLATFORM_SOURCE>* constants above.
-    :param api_key: The API key needed to access the provider.
-    :param base_url: For custom integrations you can provide an alternate base URL for the provider's API server
+    platform/source arguments are unsupported.
+
+    All providers support kwargs:
+    :param caching: zero to disable in-library caching
     :param timeout: override the default timeout for the provider (in seconds)
+
+    Providers may support (among others):
+    :param api_key: The API key needed to access the provider (may be required)
+    :param base_url: For custom integrations you can provide an alternate base URL for the provider's API server
+    :param session_id: String that identifies client session
+    :param software_id: String that identifies client software
+
     :return: the appropriate ContentProvider subclass
     """
-    if timeout is None:
-        timeout = DEFAULT_TIMEOUT
-    available = available_provider_names()
     platform_provider: ContentProvider
-    if provider_name(platform, source) in available:
-        if (platform == PLATFORM_TWITTER) and (source == PLATFORM_SOURCE_TWITTER):
-            if api_key is None:
-                raise APIKeyRequired(platform)
 
-            platform_provider = TwitterTwitterProvider(api_key, timeout, caching)
+    if name not in _PROVIDER_MAP:
+        platform, source = name.split(NAME_SEPARATOR, 1)
+        raise UnknownProviderException(platform, source)
 
-        elif (platform == PLATFORM_REDDIT) and (source == PLATFORM_SOURCE_PUSHSHIFT):
-            platform_provider = RedditPushshiftProvider(timeout, caching)
+    return _PROVIDER_MAP[name](
+        api_key=api_key, base_url=base_url,
+        timeout=timeout, caching=caching,
+        **kwargs
+    )
 
-        elif (platform == PLATFORM_YOUTUBE) and (source == PLATFORM_SOURCE_YOUTUBE):
-            if api_key is None:
-                raise APIKeyRequired(platform)
-
-            platform_provider = YouTubeYouTubeProvider(api_key, timeout, caching)
-        
-        elif (platform == PLATFORM_ONLINE_NEWS) and (source == PLATFORM_SOURCE_WAYBACK_MACHINE):
-            platform_provider = OnlineNewsWaybackMachineProvider(base_url, timeout, caching)
-
-        elif (platform == PLATFORM_ONLINE_NEWS) and (source == PLATFORM_SOURCE_MEDIA_CLOUD):
-            platform_provider = OnlineNewsMediaCloudProvider(base_url, timeout, caching)
-
-        else:
-            raise UnknownProviderException(platform, source)
-
-        return platform_provider
-    else:
-        raise UnavailableProviderException(platform, source)

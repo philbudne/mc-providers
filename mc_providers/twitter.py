@@ -13,9 +13,7 @@ from .exceptions import UnsupportedOperationException
 from .cache import CachingManager
 from .language import top_detected
 
-TWITTER_API_URL = 'https://api.twitter.com/2/'
 TWITTER_DATE_FORMAT = '%Y-%m-%dT%H:%M:%S.%f%z'
-DEFAULT_TIMEOUT = 60
 
 
 @deprecated
@@ -24,15 +22,14 @@ class TwitterTwitterProvider(ContentProvider):
     All these endpoints accept a `usernames: List[str]` keyword arg.
     """
     
+    BASE_URL = 'https://api.twitter.com/2/'
     MAX_QUERY_LENGTH = 1024  # I think?
     POLITENESS_DELAY = 1  # sleep for half a second if we're gonna spam a bunch of queries
-    
-    def __init__(self, bearer_token=None, timeout=None, caching=True):
-        super(TwitterTwitterProvider, self).__init__(caching)
-        self._logger = logging.getLogger(__name__)
-        self._bearer_token = bearer_token
+
+    def __init__(self, **kwargs):
+        # used to take bearer_token: now use api_key
+        super(TwitterTwitterProvider, self).__init__(**kwargs)
         self._session = requests.Session()  # better performance to put all HTTP through this one object
-        self._timeout = timeout or DEFAULT_TIMEOUT
 
     #Chunk'd
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10, **kwargs) -> List[Dict]:
@@ -221,9 +218,10 @@ class TwitterTwitterProvider(ContentProvider):
         """
         headers = {
             'Content-type': 'application/json',
-            'Authorization': "Bearer {}".format(self._bearer_token)
+            'Authorization': "Bearer {}".format(self._api_key)
+            # could use self._software_id for User-Agent!
         }
-        r = self._session.get(TWITTER_API_URL+endpoint, headers=headers, params=params, timeout=self._timeout)
+        r = self._session.get(self._base_url+endpoint, headers=headers, params=params, timeout=self._timeout)
         if r.status_code != 200:
             try:
                 raise RuntimeError(r.json()['title'])

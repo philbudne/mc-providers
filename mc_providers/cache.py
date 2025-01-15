@@ -24,7 +24,7 @@ class CachingManager():
                 inst = args[0]
                 assert isinstance(inst, ContentProvider)
                 # check caching enabled and wasn't disabled when Provider instantiated
-                if cls.cache_function is not None and inst._caching:
+                if cls.cache_function is not None and inst._caching > 0:
                     cache_prefix = custom_prefix_for_key or fn.__name__
                     # remove any kwargs already processed
                     # and included in positional args (ie; query string)
