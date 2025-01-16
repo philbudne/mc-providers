@@ -347,6 +347,7 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         query = "biden"
         start_date = dt.datetime(2020, 1, 1)
         end_date = dt.datetime(2023, 12, 1)
+        out_field = "indexed_date" # output name of sort field
         story_count = self._provider.count(query, start_date, end_date)#, chunk=False)
         # make sure test case is reasonable size (ie. more than one page, but not too many pages
         assert story_count > 1000
@@ -354,6 +355,9 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         page1, next_token1 = self._provider.paged_items(query, start_date, end_date)#, chunk=False)
         assert len(page1) > 0
         assert next_token1 is not None
+        page1_first = page1[0][out_field]
+        page1_last = page1[-1][out_field]
+        assert page1_first > page1_last
         page1_url1 = page1[0]['url']
         # grab token, fetch next page
         page2, next_token2 = self._provider.paged_items(query, start_date, end_date,# chunk=False,
@@ -363,6 +367,44 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         assert next_token1 != next_token2  # verify paging token changed
         page2_urls = [s['url'] for s in page2]
         assert page1_url1 not in page2_urls  # verify pages don't overlap
+        page2_first = page2[0][out_field]
+        page2_last = page2[-1][out_field]
+        assert page2_first < page1_last
+        assert page2_first > page2_last
+
+    def test_paged_items_asc(self):
+        """
+        check that sort_order parameter accepted and honored
+        """
+        query = "biden"
+        start_date = dt.datetime(2020, 1, 1)
+        end_date = dt.datetime(2020, 1, 2)
+        out_field = "indexed_date" # output name of sort field
+        story_count = self._provider.count(query, start_date, end_date, chunk=False)
+        # make sure test case is reasonable size (ie. more than one page, but not too many pages
+        assert story_count > 1000
+        # fetch first page
+        page1, next_token1 = self._provider.paged_items(query, start_date, end_date, chunk=False,
+                                                        sort_order="asc")
+        assert len(page1) > 0
+        assert next_token1 is not None
+        page1_first = page1[0][out_field]
+        page1_last = page1[-1][out_field]
+        assert page1_first < page1_last
+        page1_url1 = page1[0]['url']
+        # grab token, fetch next page
+        page2, next_token2 = self._provider.paged_items(query, start_date, end_date, chunk=False,
+                                                        pagination_token=next_token1,
+                                                        sort_order="asc")
+        assert len(page2) > 0
+        assert next_token2 is not None
+        assert next_token1 != next_token2  # verify paging token changed
+        page2_urls = [s['url'] for s in page2]
+        assert page1_url1 not in page2_urls  # verify pages don't overlap
+        page2_first = page2[0][out_field]
+        page2_last = page2[-1][out_field]
+        assert page2_first > page1_last
+        assert page2_first < page2_last
 
     def _test_domain_filters(self, domains: List[str]):
         query = "biden"
