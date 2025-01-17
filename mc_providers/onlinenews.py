@@ -646,15 +646,12 @@ from elasticsearch_dsl.query import FunctionScore, Match, Range, Query, QueryStr
 from elasticsearch_dsl.response import Hit
 from elasticsearch_dsl.utils import AttrDict
 
-from .language import terms_without_stopwords
+from .exceptions import MysteryProviderException, PermanentProviderException, ProviderException, TemporaryProviderException
 
 Field: TypeAlias = str | InstrumentedField # quiet mypy complaints
 FilterTuple: TypeAlias = tuple[int, Query | None]
 
 _ES_MAXPAGE = 1000              # define globally (ie; in .providers)???
-
-# return value for _overview
-_EMPTY_OVERVIEW = Overview(query="", total=-1, topdomains={}, toplangs={}, dailycounts={}, matches=[])
 
 # Was publication_date, but web-search always passes indexed_date.
 # identical indexed_date values (without fractional seconds?!)  have
@@ -747,26 +744,6 @@ def _b64_decode_page_token(strng: str) -> str:
 # string to lower likelihood of appearing (default keys are numeric).
 _SORT_KEY_SEP = "\x01"
 
-def _get_hits(res: Response) -> list[Hit]:
-    """
-    retrieve hits array from _search results.
-    currently called after all _search() calls
-    """
-    # _search method will have already logged any failed shards.
-    # Response.success() wants
-    # `self._shards.total == self._shards.successful and not self.timed_out`
-    if not res.success():
-        # XXX raise an Exception with useful error message?
-        logger.warn("res.success() is False!")
-        return []
-
-    try:
-        return res.hits
-    except AttributeError:
-        # XXX raise an Exception with useful error message?
-        logger.warn("failed to get res.hits!")
-        return []
-
 class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     """
     version of MC Provider going direct to ES.
@@ -794,6 +771,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
         Supported kwargs:
 
+        "partial_responses": bool (TEMPORARY?)
+            if True, return response data, even if incomplete
         "profile": bool or str
             if True, request profiling data, and log total ES CPU usage
             CAN pass string (filename) here, but feeding all the
@@ -809,6 +788,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         # total seconds from the last profiled query:
         self._last_elastic_ms = -1.0
+
+        self._partial_responses = kwargs.pop("partial_responses", False) # TEMPORARY?
 
         # after pop-ing any local-only args:
         super().__init__(**kwargs)
@@ -952,7 +933,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
         used to test _overview_query results
         """
-        return results is _EMPTY_OVERVIEW
+        # or len(results["hits"]) == 0
+        return results["total"] == 0
 
     def _index_from_dates(self, start_date: dt.datetime | None, end_date: dt.datetime | None) -> list[str]:
         """
@@ -990,24 +972,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         if (pdata := getattr(res, "profile", None)):
             self._process_profile_data(pdata)  # displays ES total time
 
-        try:                    # look for circuit breaker trips, etc
-            shards = res._shards
-            if shards:
-                failed = shards.failed
-                total = shards.total
-                if failed:
-                    # hundreds of shards, so summarize...
-                    # (almost always circuit breakers)
-                    reasons: Counter[str] = Counter()
-                    for shard in shards.failures:
-                        rt = shard.reason.type
-                        if rt:
-                            reasons[rt] += 1
-                    logger.info("MC._search %d/%d shards failed; reasons: %r",
-                                failed, total, dict(reasons))
-        except (ValueError, KeyError) as e:
-            logger.debug("error looking at results: %r", e)
-            # XXX raise Exception here??
+        self._check_response(res)    # look for circuit breaker trips, etc
         return res
 
     def _search_hits(self, search: Search) -> list[Hit]:
@@ -1015,7 +980,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         perform search, return list of Hit
         """
         res = self._search(search)
-        return _get_hits(res)
+        return res.hits
 
     def _process_profile_data(self, pdata: AttrDict) -> None:
         """
@@ -1049,6 +1014,111 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         logger.debug(" ES (ns) query: %d rewrite: %d, collectors: %d aggs: %d",
                      query_ns, rewrite_ns, coll_ns, agg_ns)
 
+    def _check_response(self, res: Response) -> None:
+        """
+        Check response for error indications.
+        Separate method for (temporary) override, code clarity
+        """
+        try:
+            self._check_response2(res)
+        except ProviderException:
+            # NOTE!!! only need separate self._check_response2 to implement
+            # partial_responses; flush separation if/when "feature" removed?
+            if self._partial_responses: # TEMPORARY?
+                shards = res._shards
+                if shards.successful > shards.skipped:
+                    logger.info("returning partial results")
+                    return
+            raise
+
+    def _check_response2(self, res: Response) -> None:
+        """
+        This worker method only needed to implement "partial_responses"
+        hack, an emergency ripcord in case the now visible circuit
+        breaker errors so often that it's deemed necessary to ignore them!
+
+        NOTE!!! Because this code is complex and brittle, and the
+        actual errors don't grow on trees, this method has a test
+        suite of its very own, which can be run by incanting:
+
+        venv/bin/pip install python-dotenv pytest # only needed once
+        venv/bin/pytest mc_providers/test/test_onlinenews_errors.py
+
+        The tests don't require any access to an Elasticsearch server
+        (SO YOU SHOULDN'T HAVE ANY EXCUSE NOT TO RUN THEM!)
+
+        AND, If you add code that handles new cases, please add tests!!
+        """
+        # Response.success() wants
+        # `._shards.total == ._shards.successful and not .timed_out`
+        if res.success():
+            return              # our work is done!
+
+        # see the above comment: limited to testing fields
+        # that Response.success() looks at!
+        shards = res._shards
+        if shards.total != shards.successful:
+            # process per-shard errors
+            parse_error = ''
+            permanent_shard_error = None
+            permanent_type = ''
+
+            # hundreds of shards, so summarize...
+            # (almost always circuit breakers)
+            reasons: Counter[str] = Counter()
+            for shard in shards.failures:
+                try:
+                    # NOTE! ordered carefully, with things most likely to be present first
+                    reason = shard.reason
+                    rt = reason.type
+
+                    if getattr(reason, "durability", "") == "PERMANENT" and not permanent_shard_error:
+                        permanent_shard_error = shard
+
+                    if rt:
+                        reasons[rt] += 1
+                        # below here things may not be present!
+                        caused_by = reason.caused_by
+                        if caused_by.type == "parse_exception" and not parse_error:
+                            parse_error = "parse error" # in case .reason not present!
+                            parse_error = caused_by.reason # can be multiple lines!
+                except AttributeError as e:
+                    logger.debug("_check_response shard %r exception %r", shard, e)
+
+            # have seen parse error PLUS permanent circuit breaker error!
+            if parse_error:
+                if len(reasons) > 1:
+                    logger.debug("parse_error with others %r", reasons)
+                raise PermanentProviderException(parse_error)
+
+            # after parse error
+            logger.info("MC._search %d/%d shards failed; reasons: %r", shards.failed, shards.total, reasons)
+
+            # have seen
+            # type == "circuit_breaking_exception",
+            # reason == "[fielddata] Data too large, data for [Global Ordinals] ....."
+            # durability == "PERMANENT"
+            if permanent_shard_error:
+                prt = permanent_shard_error.reason.type
+                if prt == "circuit_breaker_exception":
+                    prt = "Out of memory"
+                # for visibility: may want/need to lower to info if too frequent?
+                logger.warning("permanent error %r", permanent_shard_error.to_dict())
+                raise PermanentProviderException(prt)
+
+            if "circuit_breaking_exception" in reasons:
+                raise TemporaryProviderException("Out of memory")
+
+            logger.error("Unknown response error %r", res.to_dict())
+            raise MysteryProviderException(shards.failures[0].reason.type)
+        elif res.timed_out:
+            logger.info("elasticsearch response has timed_out set")
+            raise TemporaryProviderException("Timed out")
+
+        # likely here because Response.success() has changed?!
+        logger.error("Unknown response error %r", res.to_dict())
+        raise MysteryProviderException("Unknown error")
+
     @CachingManager.cache('overview')
     def _overview_query(self, q: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Overview:
         """
@@ -1070,19 +1140,15 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         search.aggs.bucket(AGG_LANG, "terms", field="language.keyword", size=100)
         search.aggs.bucket(AGG_DOMAIN, "terms", field="canonical_domain", size=100)
         search = search.extra(track_total_hits=True)
-        res = self._search(search) # run search
-        hits = _get_hits(res)   # get hits list
-        if not hits:
-            return _EMPTY_OVERVIEW # checked by _is_no_results
+        res = self._search(search) # run search, need .aggregations & .hits
 
+        hits = res.hits            # property
         # res.hits.total.value documented at
         # https://elasticsearch-dsl.readthedocs.io/en/stable/search_dsl.html#response
-        total = res.hits.total.value # type: ignore[attr-defined]
         aggs = res.aggregations
-
         return Overview(
             query=q,
-            total=total,
+            total=hits.total.value, # type: ignore[attr-defined]
             topdomains=_format_counts(aggs[AGG_DOMAIN]["buckets"]),
             toplangs=_format_counts(aggs[AGG_LANG]["buckets"]),
             dailycounts=_format_day_counts(aggs[AGG_DAILY]["buckets"]),

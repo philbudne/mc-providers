@@ -25,3 +25,21 @@ class QueryingEverythingUnsupportedQuery(ProviderException):
 # backwards compatibility:
 APIKeyRequired = MissingRequiredValue
 UnavailableProviderException = UnknownProviderException
+
+class TemporaryProviderException(ProviderException):
+    """
+    Query failed for a temporary reason.
+    str(exception) SHOULD be understandable by end users, if possible!
+    """
+
+class PermanentProviderException(ProviderException):
+    """
+    Query failed for a permanent reason.
+    str(exception) SHOULD be understandable by end users, if possible!
+    """
+
+class MysteryProviderException(ProviderException):
+    """
+    Query failed for a unknown reason, not known whether permanent or temporary!
+    str(exception) SHOULD be understandable by end users, if possible!
+    """
