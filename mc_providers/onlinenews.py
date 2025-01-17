@@ -767,6 +767,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     BASE_URL = "http://ramos.angwin:9200,http://woodward.angwin:9200,http://bradley.angwin:9200"
     WORDS_SAMPLE = 5000
 
+    # elasticsearch ApiError meta.status codes to translate to TemporaryProviderException
+    APIERROR_STATUS_TEMPORARY = [408, 429, 502, 503, 504]
+
     def __init__(self, **kwargs: Any):
         """
         Supported kwargs:
@@ -948,8 +951,6 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
         one place to send queries to ES, for logging
         """
-        logger.debug("MC._search %r", search.to_dict())
-
         t0 = time.monotonic()
         execute_args = {}
         if self._caching < 0:
@@ -964,7 +965,17 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # basis. If set, it overrides the index-level setting"
             search = search.params(request_cache=False)
 
-        res = search.execute(**execute_args)
+        try:
+            res = search.execute(**execute_args)
+        except elasticsearch.exceptions.ApiError as e:
+            logger.debug("caught %r: %r", search.to_dict(), e)
+
+            # messages almost certainly will need massage to be end-user friendly!
+            # it would be preferable to translate them here!
+            if e.meta.status in self.APIERROR_STATUS_TEMPORARY:
+                raise TemporaryProviderException(e.message)
+            raise PermanentProviderException(e.message)
+
         elapsed = time.monotonic() - t0
         logger.info("MC._search ES took %s ms (%.3f elapsed)",
                     getattr(res, "took", -1), elapsed*1000)
@@ -1123,7 +1134,6 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     def _overview_query(self, q: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Overview:
         """
         from news-search-api/api.py
-        returns _EMPTY_OVERVIEW when no hits
         """
 
         logger.debug("MC._overview %s %s %s %r", q, start_date, end_date, kwargs)
@@ -1143,11 +1153,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         res = self._search(search) # run search, need .aggregations & .hits
 
         hits = res.hits            # property
-        # res.hits.total.value documented at
-        # https://elasticsearch-dsl.readthedocs.io/en/stable/search_dsl.html#response
         aggs = res.aggregations
         return Overview(
             query=q,
+            # res.hits.total.value documented at
+            # https://elasticsearch-dsl.readthedocs.io/en/stable/search_dsl.html#response
             total=hits.total.value, # type: ignore[attr-defined]
             topdomains=_format_counts(aggs[AGG_DOMAIN]["buckets"]),
             toplangs=_format_counts(aggs[AGG_LANG]["buckets"]),
