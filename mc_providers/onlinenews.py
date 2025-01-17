@@ -967,13 +967,16 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         try:
             res = search.execute(**execute_args)
+        except elasticsearch.exceptions.TransportError as e:
+            logger.debug("%r: %r", e, search.to_dict())
+            raise TemporaryProviderException(str(e))
         except elasticsearch.exceptions.ApiError as e:
-            logger.debug("caught %r: %r", search.to_dict(), e)
+            logger.debug("%r: %r", e, search.to_dict())
+            if e.meta.status in self.APIERROR_STATUS_TEMPORARY:
+                raise TemporaryProviderException(e.message)
 
             # messages almost certainly will need massage to be end-user friendly!
             # it would be preferable to translate them here!
-            if e.meta.status in self.APIERROR_STATUS_TEMPORARY:
-                raise TemporaryProviderException(e.message)
             raise PermanentProviderException(e.message)
 
         elapsed = time.monotonic() - t0
