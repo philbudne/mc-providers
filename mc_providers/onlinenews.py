@@ -1084,19 +1084,19 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                 try:
                     # NOTE! ordered carefully, with things most likely to be present first
                     reason = shard.reason
-                    rt = reason.type
-
                     if getattr(reason, "durability", "") == "PERMANENT" and not permanent_shard_error:
                         permanent_shard_error = shard
 
+                    rt = reason.type
                     if rt:
                         reasons[rt] += 1
                         # below here things may not be present!
-                        caused_by = reason.caused_by
-                        if caused_by.type == "parse_exception" and not parse_error:
-                            parse_error = "parse error" # in case .reason not present!
-                            parse_error = caused_by.reason # can be multiple lines!
+                        if "caused_by" in reason:
+                            caused_by = reason.caused_by
+                            if caused_by.type == "parse_exception" and not parse_error:
+                                parse_error = getattr(caused_by, "reason", "parse error")
                 except AttributeError as e:
+                    # safety net
                     logger.debug("_check_response shard %r exception %r", shard, e)
 
             # have seen parse error PLUS permanent circuit breaker error!
