@@ -972,12 +972,18 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             raise TemporaryProviderException(str(e))
         except elasticsearch.exceptions.ApiError as e:
             logger.debug("%r: %r", e, search.to_dict())
-            if e.meta.status in self.APIERROR_STATUS_TEMPORARY:
-                raise TemporaryProviderException(e.message)
+            # Messages almost certainly will need massage to be end-user friendly!
+            # It would be preferable to translate them here!
+            # But it will require time and experience
+            try:
+                msg = e.body["error"]["root_cause"][0]["reason"]
+            except LookupError:
+                # maybe log json.dumps(e.body)?
+                msg = str(e)
 
-            # messages almost certainly will need massage to be end-user friendly!
-            # it would be preferable to translate them here!
-            raise PermanentProviderException(e.message)
+            if e.error in self.APIERROR_STATUS_TEMPORARY:
+                raise TemporaryProviderException(msg)
+            raise PermanentProviderException(msg)
 
         elapsed = time.monotonic() - t0
         logger.info("MC._search ES took %s ms (%.3f elapsed)",
