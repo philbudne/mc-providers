@@ -70,6 +70,12 @@ class Term(TypedDict):
     count: int
     ratio: float                # really fraction?!
 
+class Trace:
+    # less noisy things, with lower numbers
+    ARGS = 10
+    QSTR = 50                   # query string/args
+    # even more noisy things, with higher numbers
+
 class ContentProvider(ABC):
     """
     An abstract wrapper to be implemented for each platform we want to preview content from.
@@ -83,11 +89,13 @@ class ContentProvider(ABC):
     # classes which DON'T require a value should define:
     #API_KEY = ""
     #BASE_URL = ""               # subclass can override
-
     CACHING = 1
     SESSION_ID = ""
     SOFTWARE_ID = f"mc-providers {VERSION}"
     # TIMEOUT *NOT* defined, uses global DEFAULT_TIMEOUT below
+    TRACE = 0
+
+    _trace = 0                  # for subclass _env_xxx calls before calling super().__init__
 
     def __init__(self,
                  api_key: str | None = None,
@@ -95,12 +103,14 @@ class ContentProvider(ABC):
                  timeout: int | None = None,
                  caching: int | None = None, # handles bool!
                  session_id: str | None = None,
-                 software_id: str | None = None):
+                 software_id: str | None = None,
+                 trace: int | None = None):
         """
         api_key and base_url only required by some providers, but accept for all.
         not all providers may use all values, but always accepted to be able
         to detect erroneous args!
         """
+        self._trace = self._env_int(trace, "TRACE") # first, to enable tracing!
 
         self._api_key = self._env_str(api_key, "API_KEY")
         self._base_url = self._env_str(base_url, "BASE_URL")
@@ -109,11 +119,11 @@ class ContentProvider(ABC):
         self._timeout = self._env_int(timeout, "TIMEOUT", DEFAULT_TIMEOUT)
 
         if caching == 0:      # not just any falsey value
-            # False here, to paraphrase Mitt Romney:
-            # yes, my friend, bools are ints
+            # False ends up here, to paraphrase Mitt Romney:
+            # "Yes, my friend, bools are ints"
             self._caching = 0
         else:
-            self._caching = int(self._env_int(caching, "CACHING"))
+            self._caching = self._env_int(caching, "CACHING")
 
         # identify user/session making request (for caching)
         self._session_id = self._env_str(session_id, "SESSION_ID")
@@ -121,6 +131,7 @@ class ContentProvider(ABC):
         # identify software making request
         # (could be used in User-Agent strings)
         self._software_id = self._env_str(software_id, "SOFTWARE_ID")
+
 
     def everything_query(self) -> str:
         raise QueryingEverythingUnsupportedQuery()
@@ -283,27 +294,27 @@ class ContentProvider(ABC):
         """
         # 0. if kwarg passed, use it
         if kwval is not None: 
-            logger.debug("%r kwval %s '%s'", self, variable, kwval)
+            self.trace(Trace.ARGS, "%r kwval %s '%s'", self, variable, kwval)
             return kwval
 
         env_var = self._env_var(variable)
         try:
             # 1. Look for OBJ_NAME_VARIABLE env var, returns value if it exits.
             val = os.environ[env_var]
-            logger.debug("%r env %s '%s'", self, env_var, val)
+            self.trace(Trace.ARGS, "%r env %s '%s'", self, env_var, val)
             return val
         except KeyError:
             pass
 
         # 2. If (run-time) default value argument passed, return it.
         if default is not None:
-            logger.debug("%r default %s '%s'", self, variable, default)
+            self.trace(Trace.ARGS, "%r default %s '%s'", self, variable, default)
             return default
 
         try:
             # 3. Look for class member named "variable", if it exists, return value
             val = getattr(self, variable)
-            logger.debug("%r class default %s '%s'", self, variable, val)
+            self.trace(Trace.ARGS, "%r class default %s '%s'", self, variable, val)
             return val
         except AttributeError:
             pass
@@ -316,33 +327,40 @@ class ContentProvider(ABC):
         ugh: copy of _env_str
         """
         if kwval is not None:
-            logger.debug("%r kwval %s %d", self, variable, kwval)
+            self.trace(Trace.ARGS, "%r kwval %s %d", self, variable, kwval)
             return kwval
 
         env_var = self._env_var(variable)
         try:
             # 1. Look for OBJ_NAME_VARIABLE env var, returns value if it exits.
             val = int(os.environ[env_var])
-            logger.debug("%r env %s %d", self, env_var, val)
+            self.trace(Trace.ARGS, "%r env %s %d", self, env_var, val)
             return val
         except KeyError:
             pass
 
         # 2. If (run-time) default value argument passed, return it.
         if default is not None:
-            logger.debug("%r default %s %d", self, variable, default)
+            self.trace(Trace.ARGS, "%r default %s %d", self, variable, default)
             return default
 
         try:
             # 3. Look for class member named "variable", if it exists, return value
             val = getattr(self, variable)
-            logger.debug("%r class default %s %d", self, variable, val)
+            self.trace(Trace.ARGS, "%r class default %s %d", self, variable, val)
             return val
         except AttributeError:
             pass
 
         # so not "During handling of the above exception"
         self._missing_value(env_var)
+
+    def trace(self, level: int, format: str, *args: Any):
+        """
+        like debug, but with additional gatekeeping
+        """
+        if self._trace >= level:
+            logger.debug(format, *args)
 
 def add_missing_dates_to_split_story_counts(counts, start, end, period="day"):
     if start is None and end is None:

@@ -13,7 +13,7 @@ import numpy as np              # for chunking
 from waybacknews.searchapi import SearchApiClient
 
 from .language import stopwords_for_language
-from .provider import AllItems, ContentProvider, CountOverTime, Date, Item, Items, Language, Source, Term
+from .provider import AllItems, ContentProvider, CountOverTime, Date, Item, Items, Language, Source, Term, Trace
 from .cache import CachingManager
 from .mediacloud import MCSearchApiClient
 
@@ -197,7 +197,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         behavior, we can just put the two different search fields into two different sets of behavior at the top.
         There's obvious room to optimize, but this gets the done job.
         """
-        logger.debug("AP._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
+        #self.trace(Trace.QSTR, "AP._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
         domains = kwargs.get('domains', [])
 
         filters = kwargs.get('filters', [])
@@ -290,7 +290,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         returns a list of query_strings to be OR'ed together
         (to be AND'ed with user query *or* used as a filter)
         """
-        logger.debug("AP._selector_query_clauses IN: %r", kwargs)
+        #self.trace(Trace.QSTR, "AP._selector_query_clauses IN: %r", kwargs)
         selector_clauses = []
 
         domains = kwargs.get('domains', [])
@@ -307,7 +307,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
                     selector_clauses.append(f"({filter})")
                 else:
                     selector_clauses.append(filter)
-        logger.debug("AP._selector_query_clauses OUT: %s", selector_clauses)
+        #self.trace(Trace.QSTR, "AP._selector_query_clauses OUT: %s", selector_clauses)
         return selector_clauses
 
     @classmethod
@@ -328,13 +328,13 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
     @classmethod
     def _assembled_query_str(cls, query: str, **kwargs: Any) -> str:
-        logger.debug("_assembled_query_str IN: %s %r", query, kwargs)
+        #self.trace(Trace.QSTR, "_assembled_query_str IN: %s %r", query, kwargs)
         sqs = cls._selector_query_string(kwargs) # takes dict
         if sqs:
             q = f"({query}) AND ({sqs})"
         else:
             q = query
-        logger.debug("_assembled_query_str OUT: %s", q)
+        #self.trace(Trace.QSTR, "_assembled_query_str OUT: %s", q)
         return q
 
     @classmethod
@@ -486,7 +486,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return a list of query_strings to be OR'ed together
         (to be AND'ed with user query or used as a filter)
         """
-        logger.debug("MC._selector_query_clauses IN: %r", kwargs)
+        #self.trace(Trace.QSTR, "MC._selector_query_clauses IN: %r", kwargs)
         selector_clauses = super()._selector_query_clauses(kwargs)
 
         # Here to try to get web-search out of query
@@ -521,7 +521,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                 selector_clauses.append(
                         match_formatted_search_strings(fuss))
 
-        logger.debug("MC._selector_query_clauses OUT: %s", selector_clauses)
+        #self.trace(Trace.QSTR, "MC._selector_query_clauses OUT: %s", selector_clauses)
         return selector_clauses
 
     @classmethod
@@ -533,7 +533,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return count
 
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> int:
-        logger.debug("MC.count %s %s %s %r", query, start_date, end_date, kwargs)
+        logger.debug("MC.count %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "MC.count kwargs %r", kwargs)
         # no chunking on MC
         results = self._overview_query(query, start_date, end_date, **kwargs)
         return self._count_from_overview(results)
@@ -550,7 +551,9 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return count
 
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
-        logger.debug("MC.count_over_time %s %s %s %r", query, start_date, end_date, kwargs)
+        logger.debug("MC.count_over_time %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "MC.count_over_time kwargs %r", kwargs)
+
         results = self._overview_query(query, start_date, end_date, **kwargs)
         to_return: List[Date] = []
         if not self._is_no_results(results):
@@ -568,7 +571,9 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
     # NB: limit argument ignored, but included to keep mypy quiet
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20, **kwargs: Any) -> List[Dict]:
-        logger.debug("MC.sample %s %s %s %r", query, start_date, end_date, kwargs)
+        logger.debug("MC.sample %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "MC.sample kwargs %r", kwargs)
+
         results = self._overview_query(query, start_date, end_date, **kwargs)
         if self._is_no_results(results):
             rows = []
@@ -579,7 +584,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
                   **kwargs: Any) -> List[Language]:
-        logger.debug("MC.languages %s %s %s %r", query, start_date, end_date, kwargs)
+        logger.debug("MC.languages %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "MC.languages kwargs %r", kwargs)
         kwargs.pop("sample_size", None)
         results = self._overview_query(query, start_date, end_date, **kwargs)
         if self._is_no_results(results):
@@ -598,7 +604,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                 **kwargs: Any) -> List[Source]:
-        logger.debug("MC.sources %s %s %s %r", query, start_date, end_date, kwargs)
+        logger.debug("MC.sources %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "MC.sources kwargs %r", kwargs)
         results = self._overview_query(query, start_date, end_date, **kwargs)
         items: list[Source]
         if self._is_no_results(results):
@@ -611,7 +618,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
     @CachingManager.cache('overview')
     def _overview_query(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Overview:
-        logger.debug("MC._overview %s %s %s %r", query, start_date, end_date, kwargs)
+        logger.debug("MC._overview %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "MC._overview kwargs %r", kwargs)
 
         # no chunking on MC
         q = self._assembled_query_str(query, **kwargs)
@@ -624,7 +632,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         Called by OnlineNewsAbstractProvider.all_items, .words;
         ignores chunking!
         """
-        logger.debug("MC._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
+        #self.trace(Trace.QSTR, "MC._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
         return [cls._assembled_query_str(base_query, **kwargs)]
 
 ################################################################
@@ -1145,7 +1153,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         from news-search-api/api.py
         """
 
-        logger.debug("MC._overview %s %s %s %r", q, start_date, end_date, kwargs)
+        logger.debug("MCES._overview %s %s %s", q, start_date, end_date)
+        #self.trace(Trace.QSTR, "MCES._overview kwargs %r", kwargs)
 
         # these are arbitrary, but match news-search-api/client.py
         # so that es-tools/mc-es-top.py can recognize this is an overview query:
@@ -1200,8 +1209,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         `kwargs` may contain: `sort_field` (str), `sort_order` (str)
         """
-        logger.debug("MC._paged_articles q: %s: %s e: %s ps: %d kw: %r",
-                     query, start_date, end_date, page_size, kwargs)
+        logger.debug("MCES._paged_articles q: %s: %s e: %s ps: %d",
+                     query, start_date, end_date, page_size)
+        self.trace(Trace.QSTR, "MCES._paged_articles kw: %r", kwargs)
 
         page_size = min(page_size, _ES_MAXPAGE)
         expanded = kwargs.pop("expanded", False)
