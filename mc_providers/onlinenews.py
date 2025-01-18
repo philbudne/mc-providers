@@ -197,7 +197,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         behavior, we can just put the two different search fields into two different sets of behavior at the top.
         There's obvious room to optimize, but this gets the done job.
         """
-        #self.trace(Trace.QSTR, "AP._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
+        cls.trace(Trace.QSTR, "AP._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
         domains = kwargs.get('domains', [])
 
         filters = kwargs.get('filters', [])
@@ -290,7 +290,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         returns a list of query_strings to be OR'ed together
         (to be AND'ed with user query *or* used as a filter)
         """
-        #self.trace(Trace.QSTR, "AP._selector_query_clauses IN: %r", kwargs)
+        cls.trace(Trace.QSTR, "AP._selector_query_clauses IN: %r", kwargs)
         selector_clauses = []
 
         domains = kwargs.get('domains', [])
@@ -307,7 +307,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
                     selector_clauses.append(f"({filter})")
                 else:
                     selector_clauses.append(filter)
-        #self.trace(Trace.QSTR, "AP._selector_query_clauses OUT: %s", selector_clauses)
+        cls.trace(Trace.QSTR, "AP._selector_query_clauses OUT: %s", selector_clauses)
         return selector_clauses
 
     @classmethod
@@ -328,13 +328,13 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
     @classmethod
     def _assembled_query_str(cls, query: str, **kwargs: Any) -> str:
-        #self.trace(Trace.QSTR, "_assembled_query_str IN: %s %r", query, kwargs)
+        cls.trace(Trace.QSTR, "_assembled_query_str IN: %s %r", query, kwargs)
         sqs = cls._selector_query_string(kwargs) # takes dict
         if sqs:
             q = f"({query}) AND ({sqs})"
         else:
             q = query
-        #self.trace(Trace.QSTR, "_assembled_query_str OUT: %s", q)
+        cls.trace(Trace.QSTR, "_assembled_query_str OUT: %s", q)
         return q
 
     @classmethod
@@ -437,6 +437,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
     def __init__(self, **kwargs: Any):
         # maybe take comma separated list?
+        # read JSON data with latest date present in each ILM index???
         self._index = self._env_str(kwargs.pop("index_prefix", None), "INDEX_PREFIX") + "-*"
         super().__init__(**kwargs)
 
@@ -486,7 +487,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return a list of query_strings to be OR'ed together
         (to be AND'ed with user query or used as a filter)
         """
-        #self.trace(Trace.QSTR, "MC._selector_query_clauses IN: %r", kwargs)
+        cls.trace(Trace.QSTR, "MC._selector_query_clauses IN: %r", kwargs)
         selector_clauses = super()._selector_query_clauses(kwargs)
 
         # Here to try to get web-search out of query
@@ -521,7 +522,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                 selector_clauses.append(
                         match_formatted_search_strings(fuss))
 
-        #self.trace(Trace.QSTR, "MC._selector_query_clauses OUT: %s", selector_clauses)
+        cls.trace(Trace.QSTR, "MC._selector_query_clauses OUT: %s", selector_clauses)
         return selector_clauses
 
     @classmethod
@@ -567,6 +568,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                     count=data[day_date]
                 ))
         logger.debug("MC.count_over_time %d items", len(to_return))
+        self.trace(Trace.RESULTS, "MC.count_over_time %r", to_return)
         return CountOverTime(counts=to_return)
 
     # NB: limit argument ignored, but included to keep mypy quiet
@@ -580,6 +582,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         else:
             rows = self._matches_to_rows(results['matches'])
         logger.debug("MC.sample: %d rows", len(rows))
+        self.trace(Trace.RESULTS, "MC.sample %r", rows)
         return rows             # could slice w/ [:limit]!
 
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
@@ -600,6 +603,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         items = top_languages[:limit]
 
         logger.debug("MC.languages: returning %d items", len(items))
+        self.trace(Trace.RESULTS, "MC.languages %r", items)
         return items
 
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
@@ -614,6 +618,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             cleaned_sources = [Source(source=source, count=count) for source, count in results['topdomains'].items()]
             items = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
         logger.debug("MC.sources: %d items", len(items))
+        self.trace(Trace.RESULTS, "MC.sources %r", items)
         return items
 
     @CachingManager.cache('overview')
@@ -632,7 +637,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         Called by OnlineNewsAbstractProvider.all_items, .words;
         ignores chunking!
         """
-        #self.trace(Trace.QSTR, "MC._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
+        cls.trace(Trace.QSTR, "MC._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
         return [cls._assembled_query_str(base_query, **kwargs)]
 
 ################################################################
@@ -980,22 +985,21 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             raise TemporaryProviderException(str(e))
         except elasticsearch.exceptions.ApiError as e:
             logger.debug("%r: %r", e, search.to_dict())
-            # Messages almost certainly will need massage to be end-user friendly!
-            # It would be preferable to translate them here!
-            # But it will require time and experience
+            # Messages will almost certainly need massage to be
+            # end-user friendly!  It would be preferable to translate
+            # them here!  But it will require time to acquire the
+            # (arcane) knowledge and experience.
             try:
                 msg = e.body["error"]["root_cause"][0]["reason"]
             except LookupError:
-                # maybe log json.dumps(e.body)?
+                logger.debug("could not get root_cause: %r", e.body)
                 msg = str(e)
 
             if e.error in self.APIERROR_STATUS_TEMPORARY:
                 raise TemporaryProviderException(msg)
             raise PermanentProviderException(msg)
 
-        elapsed = time.monotonic() - t0
-        logger.info("MC._search ES took %s ms (%.3f elapsed)",
-                    getattr(res, "took", -1), elapsed*1000)
+        logger.debug("MC._search ES took %s ms", getattr(res, "took", -1))
 
         if (pdata := getattr(res, "profile", None)):
             self._process_profile_data(pdata)  # displays ES total time
@@ -1154,7 +1158,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
 
         logger.debug("MCES._overview %s %s %s", q, start_date, end_date)
-        #self.trace(Trace.QSTR, "MCES._overview kwargs %r", kwargs)
+        self.trace(Trace.QSTR, "MCES._overview kwargs %r", kwargs)
 
         # these are arbitrary, but match news-search-api/client.py
         # so that es-tools/mc-es-top.py can recognize this is an overview query:
@@ -1258,6 +1262,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         # double conversion!
         rows = self._matches_to_rows([_format_match(h, expanded) for h in hits])
+        self.trace(Trace.RESULTS, "MCES next %s rows %r", new_pt, rows)
         return (rows, new_pt)
 
     def all_items(self, query: str,

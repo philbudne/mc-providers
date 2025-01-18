@@ -11,7 +11,8 @@ from operator import itemgetter
 from .exceptions import MissingRequiredValue, QueryingEverythingUnsupportedQuery
 from .language import terms_without_stopwords
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) # for trace
+logger.setLevel(logging.DEBUG)
 
 # helpful for turning any date into the standard Media Cloud date format
 MC_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -72,9 +73,11 @@ class Term(TypedDict):
 
 class Trace:
     # less noisy things, with lower numbers
-    ARGS = 10
-    QSTR = 50                   # query string/args
+    ARGS = 10            # constructor args
+    RESULTS = 20
+    QSTR = 50            # query string/args
     # even more noisy things, with higher numbers
+    ALL = 1000
 
 class ContentProvider(ABC):
     """
@@ -95,7 +98,7 @@ class ContentProvider(ABC):
     # TIMEOUT *NOT* defined, uses global DEFAULT_TIMEOUT below
     TRACE = 0
 
-    _trace = 0                  # for subclass _env_xxx calls before calling super().__init__
+    _trace = int(os.environ.get("MC_PROVIDERS_TRACE", 0)) # class variable!
 
     def __init__(self,
                  api_key: str | None = None,
@@ -103,15 +106,12 @@ class ContentProvider(ABC):
                  timeout: int | None = None,
                  caching: int | None = None, # handles bool!
                  session_id: str | None = None,
-                 software_id: str | None = None,
-                 trace: int | None = None):
+                 software_id: str | None = None):
         """
         api_key and base_url only required by some providers, but accept for all.
         not all providers may use all values, but always accepted to be able
         to detect erroneous args!
         """
-        self._trace = self._env_int(trace, "TRACE") # first, to enable tracing!
-
         self._api_key = self._env_str(api_key, "API_KEY")
         self._base_url = self._env_str(base_url, "BASE_URL")
 
@@ -131,7 +131,6 @@ class ContentProvider(ABC):
         # identify software making request
         # (could be used in User-Agent strings)
         self._software_id = self._env_str(software_id, "SOFTWARE_ID")
-
 
     def everything_query(self) -> str:
         raise QueryingEverythingUnsupportedQuery()
@@ -255,6 +254,7 @@ class ContentProvider(ABC):
             [counts.update(terms_without_stopwords(t['language'], t['title'], remove_punctuation)) for t in page]
         # clean up results
         results = [Term(term=w, count=c, ratio=c/sampled_count) for w, c in counts.most_common(limit)]
+        self.trace(Trace.RESULTS, "_sampled_title_words %r", results)
         return results
 
     # from story-indexer/indexer/story.py:
@@ -355,13 +355,25 @@ class ContentProvider(ABC):
         # so not "During handling of the above exception"
         self._missing_value(env_var)
 
-    def trace(self, level: int, format: str, *args: Any):
+    @classmethod
+    def set_trace(cls, level: int) -> None:
+        cls._level = level
+
+    @classmethod
+    def trace(cls, level: int, format: str, *args: Any) -> None:
         """
-        like debug, but with additional gatekeeping
+        like logger.debug, but with additional gatekeeping.  trace level
+        is a class member to allow use from class methods!
+        **ALWAYS** pass %-format strings plus args, to avoid formatting
+        strings that are never displayed!
+
+        See initialization of _trace above to see where the default
+        value comes from
         """
-        if self._trace >= level:
+        if cls._trace >= level:
             logger.debug(format, *args)
 
+# not used??
 def add_missing_dates_to_split_story_counts(counts, start, end, period="day"):
     if start is None and end is None:
         return counts
@@ -386,6 +398,7 @@ def add_missing_dates_to_split_story_counts(counts, start, end, period="day"):
     return new_counts
 
 
+# used in normalized_count_over_time
 def _combined_split_and_normalized_counts(matching_results, total_results):
     counts = []
     for day in total_results:
