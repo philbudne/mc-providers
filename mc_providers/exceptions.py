@@ -40,7 +40,7 @@ class BifurcatedProviderException(ProviderException):
         return self.friendly
 
     def __repr__(self):
-        return f"{self.__class.__name__}({self.friendly!r},{self.detail!r})"
+        return f"{type(self).__name__}({self.friendly!r},{self.detail!r})"
 
 class TemporaryProviderException(BifurcatedProviderException):
     """
