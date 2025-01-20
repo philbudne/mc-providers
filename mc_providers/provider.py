@@ -357,7 +357,7 @@ class ContentProvider(ABC):
 
     @classmethod
     def set_trace(cls, level: int) -> None:
-        cls._level = level
+        cls._trace = level
 
     @classmethod
     def trace(cls, level: int, format: str, *args: Any) -> None:

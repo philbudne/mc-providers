@@ -659,7 +659,7 @@ from elasticsearch_dsl.query import FunctionScore, Match, Range, Query, QueryStr
 from elasticsearch_dsl.response import Hit
 from elasticsearch_dsl.utils import AttrDict
 
-from .exceptions import MysteryProviderException, PermanentProviderException, ProviderException, TemporaryProviderException
+from .exceptions import MysteryProviderException, ParseException, PermanentProviderException, ProviderException, TemporaryProviderException
 
 Field: TypeAlias = str | InstrumentedField # quiet mypy complaints
 FilterTuple: TypeAlias = tuple[int, Query | None]
@@ -982,29 +982,43 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             res = search.execute(**execute_args)
         except elasticsearch.exceptions.TransportError as e:
             logger.debug("%r: %r", e, search.to_dict())
-            raise TemporaryProviderException(str(e))
+            raise TemporaryProviderException("networking") from e
         except elasticsearch.exceptions.ApiError as e:
             logger.debug("%r: %r", e, search.to_dict())
             # Messages will almost certainly need massage to be
             # end-user friendly!  It would be preferable to translate
-            # them here!  But it will require time to acquire the
+            # them here, but it will require time to acquire the
             # (arcane) knowledge and experience.
             try:
-                msg = e.body["error"]["root_cause"][0]["reason"]
-            except LookupError:
+                for cause in e.body["error"]["root_cause"]:
+                    short = cause["type"]
+                    long = cause["reason"]
+                    if short == "parse_exception":
+                        raise self._parse_exception(long)
+            except (LookupError, TypeError):
                 logger.debug("could not get root_cause: %r", e.body)
-                msg = str(e)
+                short = str(e)
+                long = repr(e)
 
             if e.error in self.APIERROR_STATUS_TEMPORARY:
-                raise TemporaryProviderException(msg)
-            raise PermanentProviderException(msg)
+                raise TemporaryProviderException(short, long) from e
+            raise PermanentProviderException(short, long) from e
 
         logger.debug("MC._search ES took %s ms", getattr(res, "took", -1))
 
         if (pdata := getattr(res, "profile", None)):
             self._process_profile_data(pdata)  # displays ES total time
 
-        self._check_response(res)    # look for circuit breaker trips, etc
+        # look for circuit breaker trips, etc
+        try:
+            self._check_response(res)
+        except ProviderException:
+            if self._partial_responses: # TEMPORARY?
+                shards = res._shards
+                if shards.successful > shards.skipped:
+                    logger.info("returning partial results") # warning??
+                    return res
+            raise
         return res
 
     def _search_hits(self, search: Search) -> list[Hit]:
@@ -1047,23 +1061,6 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                      query_ns, rewrite_ns, coll_ns, agg_ns)
 
     def _check_response(self, res: Response) -> None:
-        """
-        Check response for error indications.
-        Separate method for (temporary) override, code clarity
-        """
-        try:
-            self._check_response2(res)
-        except ProviderException:
-            # NOTE!!! only need separate self._check_response2 to implement
-            # partial_responses; flush separation if/when "feature" removed?
-            if self._partial_responses: # TEMPORARY?
-                shards = res._shards
-                if shards.successful > shards.skipped:
-                    logger.info("returning partial results")
-                    return
-            raise
-
-    def _check_response2(self, res: Response) -> None:
         """
         This worker method only needed to implement "partial_responses"
         hack, an emergency ripcord in case the now visible circuit
@@ -1121,7 +1118,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             if parse_error:
                 if len(reasons) > 1:
                     logger.debug("parse_error with others %r", reasons)
-                raise PermanentProviderException(parse_error)
+                raise self._parse_exception(parse_error)
 
             # after parse error
             logger.info("MC._search %d/%d shards failed; reasons: %r", shards.failed, shards.total, reasons)
@@ -1131,18 +1128,16 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # reason == "[fielddata] Data too large, data for [Global Ordinals] ....."
             # durability == "PERMANENT"
             if permanent_shard_error:
-                prt = permanent_shard_error.reason.type
-                if prt == "circuit_breaker_exception":
-                    prt = "Out of memory"
-                # for visibility: may want/need to lower to info if too frequent?
                 logger.warning("permanent error %r", permanent_shard_error.to_dict())
-                raise PermanentProviderException(prt)
+                pser = permanent_shard_error.reason
+                raise PermanentProviderException(pser.type, pser.reason)
 
             if "circuit_breaking_exception" in reasons:
                 raise TemporaryProviderException("Out of memory")
 
             logger.error("Unknown response error %r", res.to_dict())
-            raise MysteryProviderException(shards.failures[0].reason.type)
+            raise MysteryProviderException(shards.failures[0].reason.type,
+                                           shards.failures[0].reason.reason)
         elif res.timed_out:
             logger.info("elasticsearch response has timed_out set")
             raise TemporaryProviderException("Timed out")
@@ -1150,6 +1145,13 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         # likely here because Response.success() has changed?!
         logger.error("Unknown response error %r", res.to_dict())
         raise MysteryProviderException("Unknown error")
+
+    def _parse_exception(self, multiline: str) -> ParseException:
+        """
+        take multiline parser error, and return ParseException
+        """
+        first, rest = multiline.split("\n", 1)
+        return ParseException(first, rest)
 
     @CachingManager.cache('overview')
     def _overview_query(self, q: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Overview:
@@ -1296,7 +1298,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         search = self._basic_search(query, start_date, end_date, **kwargs)\
                      .query(
                          FunctionScore(
-                             # elasticsearch_dsl v8.17 gives mypy error, bug reported as
+                             # elasticsearch_dsl v8.17 gives mypy error, phil reported as
                              # https://github.com/elastic/elasticsearch-dsl-py/issues/1369
                              # PLEASE REMOVE THIS COMMENT WHEN THE IGNORE BELOW BECOMES UNNECESSARY!
                              functions=[ # type: ignore[arg-type]

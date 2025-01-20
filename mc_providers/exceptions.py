@@ -56,3 +56,10 @@ class MysteryProviderException(BifurcatedProviderException):
     """
     Query failed for a unknown reason, not known whether permanent or temporary!
     """
+
+# subclasses of Permanent/Temporary/Mystery:
+
+class ParseException(PermanentProviderException):
+    """
+    Query string failed to parse
+    """
