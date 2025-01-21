@@ -1010,15 +1010,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             self._process_profile_data(pdata)  # displays ES total time
 
         # look for circuit breaker trips, etc
-        try:
-            self._check_response(res)
-        except ProviderException:
-            if self._partial_responses: # TEMPORARY?
-                shards = res._shards
-                if shards.successful > shards.skipped:
-                    logger.info("returning partial results") # warning??
-                    return res
-            raise
+        self._check_response(res)
+
         return res
 
     def _search_hits(self, search: Search) -> list[Hit]:
@@ -1133,6 +1126,10 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                 raise PermanentProviderException(pser.type, pser.reason)
 
             if "circuit_breaking_exception" in reasons:
+                # NOTE! checking late so that above logging occurs
+                if self._partial_responses:
+                    logger.info("returning partial results")
+                    return
                 raise TemporaryProviderException("Out of memory")
 
             logger.error("Unknown response error %r", res.to_dict())
