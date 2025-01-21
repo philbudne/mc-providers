@@ -58,8 +58,10 @@ class MysteryProviderException(BifurcatedProviderException):
     """
 
 # subclasses of Permanent/Temporary/Mystery:
+# add new ones to identify particular classes of errors, and to
+# signify that an end-user-friendly string is returned by str()
 
-class ParseException(PermanentProviderException):
+class ProviderParseException(PermanentProviderException):
     """
     Query string failed to parse
     """

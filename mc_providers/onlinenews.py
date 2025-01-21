@@ -659,7 +659,7 @@ from elasticsearch_dsl.query import FunctionScore, Match, Range, Query, QueryStr
 from elasticsearch_dsl.response import Hit
 from elasticsearch_dsl.utils import AttrDict
 
-from .exceptions import MysteryProviderException, ParseException, PermanentProviderException, ProviderException, TemporaryProviderException
+from .exceptions import MysteryProviderException, ProviderParseException, PermanentProviderException, ProviderException, TemporaryProviderException
 
 Field: TypeAlias = str | InstrumentedField # quiet mypy complaints
 FilterTuple: TypeAlias = tuple[int, Query | None]
@@ -1146,12 +1146,12 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         logger.error("Unknown response error %r", res.to_dict())
         raise MysteryProviderException("Unknown error")
 
-    def _parse_exception(self, multiline: str) -> ParseException:
+    def _parse_exception(self, multiline: str) -> ProviderParseException:
         """
-        take multiline parser error, and return ParseException
+        take multiline parser error, and return ProviderParseException
         """
         first, rest = multiline.split("\n", 1)
-        return ParseException(first, rest)
+        return ProviderParseException(first, rest)
 
     @CachingManager.cache('overview')
     def _overview_query(self, q: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Overview:
