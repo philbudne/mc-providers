@@ -1,37 +1,56 @@
 import datetime as dt
-from typing import List, Dict, Optional
-import dateparser
+import json
 import logging
-import ciso8601
-import numpy as np
+import os
 import random
-from waybacknews.searchapi import SearchApiClient
 from collections import Counter
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, TypeAlias, TypedDict
+
+# PyPI
+import ciso8601
+import dateparser     # used for publication_date in IA match_to_row
+import numpy as np              # for chunking
+from waybacknews.searchapi import SearchApiClient
 
 from .language import stopwords_for_language
-from .provider import ContentProvider
+from .provider import AllItems, ContentProvider, CountOverTime, Date, Item, Items, Language, Source, Term
 from .cache import CachingManager
 from .mediacloud import MCSearchApiClient
 
+# don't need a logger per Provider instance
+logger = logging.getLogger(__name__)
+
+Counts: TypeAlias = dict[str, int]         # key: count
+UrlSearchStrings: TypeAlias = Mapping[str, set[str]] # want Countable[str]
+
+class Overview(TypedDict):
+    query: str
+    total: int
+    topdomains: Counts          # from _format_counts
+    toplangs: Counts            # from _format_counts
+    dailycounts: Counts         # from _format_day_counts
+    matches: list[Dict]         # from _format_match
+
 class OnlineNewsAbstractProvider(ContentProvider):
     """
-    All these endpoints accept a `domains: List[str]` keyword arg.
+    All these endpoints accept a `domains: List[str]` search keyword arg.
+    and a `base_url: str` constructor keyword arg.
     """
-    
+
     MAX_QUERY_LENGTH = pow(2, 14)
 
-    def __init__(self, base_url: Optional[str], timeout: int = None):
-        super().__init__()
-        self._logger = logging.getLogger(__name__)
-        self._base_url = base_url
-        self._timeout = timeout
+    # default values for constructor arguments
+    API_KEY = ""                # not required
+
+    def __init__(self, **kwargs: Any):
+        super().__init__(**kwargs)
         self._client = self.get_client()
 
     def get_client(self):
         raise NotImplementedError("Abstract provider class should not be implemented directly")
 
     @classmethod
-    def domain_search_string(cls):
+    def domain_search_string(cls) -> str:
         raise NotImplementedError("Abstract provider class should not be implemented directly")
 
     def everything_query(self) -> str:
@@ -40,9 +59,9 @@ class OnlineNewsAbstractProvider(ContentProvider):
     # Chunk'd
     # NB: it looks like the limit keyword here doesn't ever get passed into the query - something's missing here.
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
-               **kwargs) -> List[Dict]:
+               **kwargs: Any) -> Items:
         results = []
-        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
             this_results = self._client.sample(subquery, start_date, end_date, **kwargs)
             results.extend(this_results)
         
@@ -52,56 +71,55 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return self._matches_to_rows(results)
 
     # Chunk'd
-    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
+    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> int:
         count = 0
-        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
             count += self._client.count(subquery, start_date, end_date, **kwargs)
         return count
 
     # Chunk'd
-    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
-        counter = Counter()
-        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
+        counter: Counter = Counter()
+        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
             results = self._client.count_over_time(subquery, start_date, end_date, **kwargs)
             countable = {i['date']: i['count'] for i in results}
             counter += Counter(countable)
         
         counter_dict = dict(counter)
-        results = [{"date": date, "timestamp": date.timestamp(), "count": count} for date, count in counter_dict.items()]
+        results = [Date(date=date, timestamp=date.timestamp(), count=count) for date, count in counter_dict.items()]
         # Somehow the order of this list gets out of wack. Sorting before returning for the sake of testability
-        sorted_results = sorted(results, key=lambda x: x["timestamp"])
-        return {'counts': sorted_results}
+        results.sort(key=lambda x: x["timestamp"])
+        return CountOverTime(counts=results)
 
     
     @CachingManager.cache()
-    def item(self, item_id: str) -> Dict:
+    def item(self, item_id: str) -> Item:
         one_item = self._client.article(item_id)
         return self._match_to_row(one_item)
 
     
     # Chunk'd
-    def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs):
+    def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs: Any) -> AllItems:
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
             for page in self._client.all_articles(subquery, start_date, end_date, **kwargs):
                 yield self._matches_to_rows(page)
 
-    def paged_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs)\
-            -> tuple[List[Dict], str] :
+    def paged_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs: Any)\
+            -> tuple[List[Dict], Optional[str]] :
         """
         Note - this is not chunk'd so you can't run giant queries page by page... use `all_items` instead.
         This kwargs should include `pagination_token`, which will get relayed in to the api client and fetch
         the right page of results.
         """
         updated_kwargs = {**kwargs, 'chunk': False}
-        query = self._assemble_and_chunk_query_str(query, **updated_kwargs)[0]
+        query = self._assemble_and_chunk_query_str_kw(query, updated_kwargs)[0]
         page, pagination_token = self._client.paged_articles(query, start_date, end_date, **kwargs)
         return self._matches_to_rows(page), pagination_token
 
     # Chunk'd
     @CachingManager.cache()
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-              **kwargs) -> List[Dict]:
-        
+              **kwargs: Any) -> List[Term]:
         chunked_queries = self._assemble_and_chunk_query_str(query, **kwargs)
 
         # first figure out the dominant languages, so we can remove appropriate stopwords.
@@ -109,10 +127,10 @@ class OnlineNewsAbstractProvider(ContentProvider):
         top_languages = self.languages(query, start_date, end_date, limit=100, **kwargs) 
 
         represented_languages = [i['language'] for i in top_languages if i['ratio'] > 0.1]
-        stopwords = []
+        stopwords = set()
         for lang in represented_languages:
             try:
-                stopwords += stopwords_for_language(lang)
+                stopwords.update(stopwords_for_language(lang))
             except RuntimeError:
                 pass  # not stopwords for language, just let them all pass through
             
@@ -120,7 +138,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         sample_size = 5000
         
         # An accumulator for the subqueries
-        results_counter = Counter({})
+        results_counter: Counter = Counter({})
         for subquery in chunked_queries:
             this_results = self._client.terms(subquery, start_date, end_date,
                                      self._client.TERM_FIELD_TITLE, self._client.TERM_AGGREGATION_TOP)
@@ -131,55 +149,45 @@ class OnlineNewsAbstractProvider(ContentProvider):
         results = dict(results_counter)
             
         # and clean up results to return
-        top_terms = [dict(term=t.lower(), count=c, ratio=c/sample_size) for t, c in results.items()
+        top_terms = [Term(term=t.lower(), count=c, ratio=c/sample_size) for t, c in results.items()
                      if t.lower() not in stopwords]
         top_terms = sorted(top_terms, key=lambda x:x["count"], reverse=True)
         return top_terms
 
     # Chunk'd
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
-                  **kwargs) -> List[Dict]:
+                  **kwargs: Any) -> List[Language]:
         
         matching_count = self.count(query, start_date, end_date, **kwargs)
 
-        results_counter = Counter({})
-        for subquery in self._assemble_and_chunk_query_str(query, **kwargs) :   
+        results_counter: Counter = Counter({})
+        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
             this_languages = self._client.top_languages(subquery, start_date, end_date, **kwargs)
             countable = {item["name"]: item["value"] for item in this_languages}
             results_counter += Counter(countable)
-            # top_languages.extend(this_languages)
         
-        all_results = dict(results_counter)
+        top_languages = [Language(language=name, value=value, ratio=value/matching_count) for name, value in results_counter.items()]
         
-        top_languages = [{'language': name, 'value': value, 'ratio': 0.0} for name, value in all_results.items()]
-        
-        for item in top_languages:
-            item['ratio'] = item['value'] / matching_count
-        
-        # Sort by count, then alphabetically
+        # Sort by count
         top_languages = sorted(top_languages, key=lambda x: x['value'], reverse=True)
         return top_languages[:limit]
 
     # Chunk'd
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                **kwargs) -> List[Dict]:
+                **kwargs: Any) -> List[Source]:
         
-        # all_results = []
-        
-        results_counter = Counter({})
-        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+        results_counter: Counter = Counter({})
+        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
             results = self._client.top_sources(subquery, start_date, end_date)
             countable = {source['name']: source['value'] for source in results}
             results_counter += Counter(countable)
-            # all_results.extend(results)
         
-        all_results = dict(results_counter)
-        cleaned_sources = [{"source": source , "count": count} for source, count in all_results.items()]
+        cleaned_sources = [Source(source=source, count=count) for source, count in results_counter.items()]
         cleaned_sources = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
         return cleaned_sources
 
     @classmethod
-    def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs):
+    def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs: Any) -> list[str]:
         """
         If a query string is too long, we can attempt to run it anyway by splitting the domain substring (which is
         guaranteed to be only a sequence of ANDs) into parts, to produce multiple smaller queries which are collectively
@@ -189,11 +197,11 @@ class OnlineNewsAbstractProvider(ContentProvider):
         behavior, we can just put the two different search fields into two different sets of behavior at the top.
         There's obvious room to optimize, but this gets the done job.
         """
-        
+        logger.debug("AP._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
         domains = kwargs.get('domains', [])
 
         filters = kwargs.get('filters', [])
-        
+
         if chunk and (len(base_query) > cls.MAX_QUERY_LENGTH):
             # of course there still is the possibility that the base query is too large, which
             # cannot be fixed by this method
@@ -237,45 +245,107 @@ class OnlineNewsAbstractProvider(ContentProvider):
             queries = domain_queries + filter_queries
         
         return queries
-    
+
+    @staticmethod
+    def _prune_kwargs(kwargs: dict[str, Any]) -> None:
+        """
+        takes a query **kwargs dict and removes keys that
+        are processed in this library, and should not be passed to clients.
+        """
+        kwargs.pop("chunk", None) # bool
+        kwargs.pop("domains", None) # Iterable[str]
+        kwargs.pop("filters", None) # Iterable[str]
+        kwargs.pop("url_search_strings", None) # dict[str, Iterable[str]]
+        kwargs.pop("url_search_string_domain", None) # bool: TEMP
+
     @classmethod
-    def _assembled_query_str(cls, query: str, **kwargs) -> str:
-        
+    def _check_kwargs(cls, kwargs: dict[str, Any]) -> None:
+        """
+        check for unknown/misspelled kwargs
+
+        called with kwargs dict after query arguments removed
+        copyies kwargs, removes local-only keys and raises
+        exception if anything remains
+        """
+        kwcopy = kwargs.copy()
+        cls._prune_kwargs(kwcopy)
+        if kwcopy:
+            exstring = ", ".join(kwcopy) # join key names
+            raise TypeError(f"unknown keyword args: {exstring}")
+
+    @classmethod
+    def _assemble_and_chunk_query_str_kw(cls, base_query: str, kwargs: dict = {}) -> list[str]:
+        """
+        takes kwargs as *dict*, removes items that shouldn't be sent to _client
+        """
+        chunk = kwargs.pop("chunk", True)
+        queries = cls._assemble_and_chunk_query_str(base_query, chunk=chunk, **kwargs)
+        cls._prune_kwargs(kwargs)
+        return queries
+
+    @classmethod
+    def _selector_query_clauses(cls, kwargs: dict) -> list[str]:
+        """
+        take domains and filters kwargs and
+        returns a list of query_strings to be OR'ed together
+        (to be AND'ed with user query *or* used as a filter)
+        """
+        logger.debug("AP._selector_query_clauses IN: %r", kwargs)
+        selector_clauses = []
+
         domains = kwargs.get('domains', [])
-        domain_clause = ""
-        
         if len(domains) > 0:
-            domain_string = " OR ".join(domains)
-            domain_clause = f"{cls.domain_search_string()}:({domain_string})"
+            domain_strings = " OR ".join(domains)
+            selector_clauses.append(f"{cls.domain_search_string()}:({domain_strings})")
             
+        # put all filters in single query string (NOTE: additive)
         filters = kwargs.get('filters', [])
-        filter_clause = ""
-        
         if len(filters) > 0:
-            filter_clause = " OR ".join(filters)
-        
-        # need to put all those filters in single query string
-        q = query
-        
-        if (len(domains) > 0) and (len(filters) > 0) :
-            q += f" AND (({domain_clause}) OR ({filter_clause}))"
-        
-        elif len(domains) > 0:
-            q += f" AND ({domain_clause})"
-        
-        elif len(filters) > 0:
-            q += f" AND ({filter_clause})"
+            for filter in filters:
+                if "AND" in filter:
+                    # parenthesize if any chance it has a grabby AND.
+                    selector_clauses.append(f"({filter})")
+                else:
+                    selector_clauses.append(filter)
+        logger.debug("AP._selector_query_clauses OUT: %s", selector_clauses)
+        return selector_clauses
+
+    @classmethod
+    def _selector_count(cls, kwargs: dict) -> int:
+        return len(kwargs.get('domains', [])) + len(kwargs.get('filters', []))
+
+    @classmethod
+    def _selector_query_string_from_clauses(cls, clauses: list[str]) -> str:
+        return " OR ".join(clauses)
+
+    @classmethod
+    def _selector_query_string(cls, kwargs: dict) -> str:
+        """
+        takes kwargs (as dict) return a query_string to be AND'ed with
+        user query or used as a filter.
+        """
+        return cls._selector_query_string_from_clauses(cls._selector_query_clauses(kwargs))
+
+    @classmethod
+    def _assembled_query_str(cls, query: str, **kwargs: Any) -> str:
+        logger.debug("_assembled_query_str IN: %s %r", query, kwargs)
+        sqs = cls._selector_query_string(kwargs) # takes dict
+        if sqs:
+            q = f"({query}) AND ({sqs})"
+        else:
+            q = query
+        logger.debug("_assembled_query_str OUT: %s", q)
         return q
 
     @classmethod
-    def _matches_to_rows(cls, matches: List) -> List:
+    def _matches_to_rows(cls, matches: List) -> Items:
         raise NotImplementedError()
 
     @classmethod
-    def _match_to_row(cls, match: Dict) -> Dict:
+    def _match_to_row(cls, match: Dict) -> Item:
         raise NotImplementedError()
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         # important to keep this unique among platforms so that the caching works right
         return "OnlineNewsAbstractProvider"
 
@@ -284,9 +354,10 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
     """
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
+    BASE_URL = ""               # SearchApiClient has default
 
-    def __init__(self, base_url: Optional[str] = None, timeout: int = None):
-        super().__init__(base_url, timeout)  # will call get_client
+    def __init__(self, **kwargs: Any):
+        super().__init__(**kwargs)  # will call get_client
 
     def get_client(self):
         client = SearchApiClient("mediacloud", self._base_url)
@@ -295,11 +366,11 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
         return client
 
     @classmethod
-    def domain_search_string(cls):
+    def domain_search_string(cls) -> str:
         return "domain"
 
     @classmethod
-    def _matches_to_rows(cls, matches: List) -> List:
+    def _matches_to_rows(cls, matches: List) -> Items:
         return [OnlineNewsWaybackMachineProvider._match_to_row(m) for m in matches]
 
     @classmethod
@@ -316,9 +387,44 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
             'article_url': match['article_url'],
         }
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         # important to keep this unique among platforms so that the caching works right
         return "OnlineNewsWaybackMachineProvider"
+
+
+################
+# helpers for formatting url_search_strings (only enabled for MC)
+# the helpers are only needed because of the TEMP url_search_string_domain
+
+def format_and_append_uss(uss: str, url_list: list[str]) -> None:
+    """
+    The ONE place that knows how to format a url_search_string!!!
+    (ie; what to put before and after one).
+
+    Appends to `url_list` argument!
+
+    NOTE! generates "unsanitized" (unsanitary?) strings!!
+
+    Currently (11/2024) A URL Search String should:
+    1. Start with fully qualified domain name WITHOUT http:// or https://
+    2. End with "*"
+    """
+    # currently url_search_strings MUST start with fully
+    # qualified domain name (FQDN) without scheme or
+    # leading slashes, and MUST end with a *!
+    if not uss.endswith("*"):
+        uss += "*"
+    url_list.append(f"http\\://{uss}")
+    url_list.append(f"https\\://{uss}")
+
+def match_formatted_search_strings(fuss: list[str]) -> str:
+    """
+    takes list of url search_string formatted by `format_and_append_uss`
+    returns query_string fragment
+    """
+    assert fuss
+    urls_str = " OR ".join(fuss)
+    return f"url:({urls_str})"
 
 
 class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
@@ -326,108 +432,792 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     Provider interface to access new mediacloud-news-search archive. 
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
-    
-    DEFAULT_COLLECTION = "mc_search-*"
+    BASE_URL = "http://ramos.angwin:8000/v1/"
+    INDEX_PREFIX = "mc_search"
 
-    def __init__(self, base_url=Optional[str], timeout: int = None):
-        super().__init__(base_url, timeout)
+    def __init__(self, **kwargs: Any):
+        # maybe take comma separated list?
+        self._index = self._env_str(kwargs.pop("index_prefix", None), "INDEX_PREFIX") + "-*"
+        super().__init__(**kwargs)
 
     def get_client(self):
-        api_client = MCSearchApiClient(collection=self.DEFAULT_COLLECTION, api_base_url=self._base_url)
+        api_client = MCSearchApiClient(collection=self._index, api_base_url=self._base_url)
         if self._timeout:
             api_client.TIMEOUT_SECS = self._timeout
         return api_client
 
     @classmethod
-    def domain_search_string(cls):
+    def domain_search_string(cls) -> str:
         return "canonical_domain"
 
     @classmethod
     def _matches_to_rows(cls, matches: List) -> List:
-        return [OnlineNewsMediaCloudProvider._match_to_row(m) for m in matches]
+        return [cls._match_to_row(m) for m in matches]
 
-    @classmethod
-    def _match_to_row(cls, match: Dict) -> Dict:
+    @staticmethod
+    def _match_to_row(match: Dict) -> Dict:
         story_info = {
             'id': match['id'],
             'media_name': match['canonical_domain'],
             'media_url': match['canonical_domain'],
             'title': match['article_title'],
-            'publish_date': dateparser.parse(match['publication_date']).date(),
+            'publish_date': dt.date.fromisoformat(match['publication_date']),
             'url': match['url'],
             'language': match['language'],
-            'indexed_date': dateparser.parse(match['indexed_date']),
+            'indexed_date': ciso8601.parse_datetime(match['indexed_date']+"Z"),
         }
         if 'text_content' in match:
             story_info['text'] = match['text_content']
         return story_info
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return "OnlineNewsMediaCloudProvider"
 
-    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
+    def _is_no_results(self, results: Overview) -> bool:
+        """
+        used to test _overview_query results
+        """
+        return self._client._is_no_results(results)
+
+    @classmethod
+    def _selector_query_clauses(cls, kwargs: dict) -> list[str]:
+        """
+        take domains, filters, url_search_strings as kwargs
+        return a list of query_strings to be OR'ed together
+        (to be AND'ed with user query or used as a filter)
+        """
+        logger.debug("MC._selector_query_clauses IN: %r", kwargs)
+        selector_clauses = super()._selector_query_clauses(kwargs)
+
+        # Here to try to get web-search out of query
+        # formatting biz.  Accepts a Mapping indexed by
+        # domain_string, of lists (or sets!) of search_strings.
+        url_search_strings: UrlSearchStrings = kwargs.get('url_search_strings', {})
+        if url_search_strings:
+            # Unclear if domain field check actually helps at all,
+            # so make it optional for testing.
+            if kwargs.get("url_search_string_domain", True): # TEMP: include canonincal_domain:
+                domain_field = cls.domain_search_string()
+
+                # here with mapping of cdom => iterable[search_string]
+                for cdom, search_strings in url_search_strings.items():
+                    fuss: List[str] = [] # formatted url_search_strings
+                    for sstr in search_strings:
+                        format_and_append_uss(sstr, fuss)
+
+                    mfuss = match_formatted_search_strings(fuss)
+                    selector_clauses.append(
+                        f"({domain_field}:{cdom} AND {mfuss})")
+
+                    format_and_append_uss(cdom, fuss)
+            else: # make query without domain (name) field check
+                # collect all the URL search strings
+                fuss = []
+                for cdom, search_strings in url_search_strings.items():
+                    for sstr in search_strings:
+                        format_and_append_uss(sstr, fuss)
+
+                # check all the urls in one swell foop!
+                selector_clauses.append(
+                        match_formatted_search_strings(fuss))
+
+        logger.debug("MC._selector_query_clauses OUT: %s", selector_clauses)
+        return selector_clauses
+
+    @classmethod
+    def _selector_count(cls, kwargs: dict) -> int:
+        url_search_strings: UrlSearchStrings = kwargs.get('url_search_strings', {})
+        count = super()._selector_count(kwargs)
+        if url_search_strings:
+            count += sum(map(len, url_search_strings.values()))
+        return count
+
+    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> int:
+        logger.debug("MC.count %s %s %s %r", query, start_date, end_date, kwargs)
         # no chunking on MC
-        q = self._assembled_query_str(query, **kwargs)
-        results = self._overview_query(q, start_date, end_date, **kwargs)
-        if self._client._is_no_results(results):
+        results = self._overview_query(query, start_date, end_date, **kwargs)
+        return self._count_from_overview(results)
+
+    def _count_from_overview(self, results: Overview) -> int:
+        """
+        used in .count() and .languages()
+        """
+        if self._is_no_results(results):
+            logger.debug("MC._count_from_overview: no results")
             return 0
-        return results['total']
+        count = results['total']
+        logger.debug("MC._count_from_overview: %s", count)
+        return count
 
-    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
-        # no chunking on MC
-        q = self._assembled_query_str(query, **kwargs)
-        results = self._overview_query(q, start_date, end_date, **kwargs)
-        if self._client._is_no_results(results):
-            to_return = []
-        else:
+    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
+        logger.debug("MC.count_over_time %s %s %s %r", query, start_date, end_date, kwargs)
+        results = self._overview_query(query, start_date, end_date, **kwargs)
+        to_return: List[Date] = []
+        if not self._is_no_results(results):
             data = results['dailycounts']
-            to_return = []
-            # transform to list of dicts for easier use
-            for day_date, day_value in data.items():  # date is in 'YYYY-MM-DD' format
-                day = ciso8601.parse_datetime(day_date)
-                to_return.append({
-                    'date': day,
-                    'timestamp': day.timestamp(),
-                    'count': day_value,
-                })
-        sorted_results = sorted(to_return, key=lambda x: x["timestamp"])
-        return {'counts': sorted_results}
+            # transform to list of dicts for easier use: process in sorted order
+            for day_date in sorted(data):  # date is in 'YYYY-MM-DD' format
+                dt = ciso8601.parse_datetime(day_date) # PB: is datetime!!
+                to_return.append(Date(
+                    date=dt.date(), # PB: was returning datetime!
+                    timestamp=int(dt.timestamp()), # PB: conversion may be to local time!!
+                    count=data[day_date]
+                ))
+        logger.debug("MC.count_over_time %d items", len(to_return))
+        return CountOverTime(counts=to_return)
 
-    def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> List[Dict]:
-        # no chunking on MC
-        q = self._assembled_query_str(query, **kwargs)
-        results = self._overview_query(q, start_date, end_date, **kwargs)
-        if self._client._is_no_results(results):
-            return []
-        return self._matches_to_rows(results['matches'])
+    # NB: limit argument ignored, but included to keep mypy quiet
+    def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20, **kwargs: Any) -> List[Dict]:
+        logger.debug("MC.sample %s %s %s %r", query, start_date, end_date, kwargs)
+        results = self._overview_query(query, start_date, end_date, **kwargs)
+        if self._is_no_results(results):
+            rows = []
+        else:
+            rows = self._matches_to_rows(results['matches'])
+        logger.debug("MC.sample: %d rows", len(rows))
+        return rows             # could slice w/ [:limit]!
 
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
-                  **kwargs) -> List[Dict]:
-        q = self._assembled_query_str(query, **kwargs)
-        results = self._overview_query(q, start_date, end_date, **kwargs)
-        if self._client._is_no_results(results):
+                  **kwargs: Any) -> List[Language]:
+        logger.debug("MC.languages %s %s %s %r", query, start_date, end_date, kwargs)
+        kwargs.pop("sample_size", None)
+        results = self._overview_query(query, start_date, end_date, **kwargs)
+        if self._is_no_results(results):
             return []
-        top_languages = [{'language': name, 'value': value, 'ratio': 0.0}
+        matches = self._count_from_overview(results)
+        top_languages = [Language(language=name, value=value, ratio=value/matches)
                          for name, value in results['toplangs'].items()]
-        # now normalize
-        matching_count = self.count(query, start_date, end_date, **kwargs)
-        for item in top_languages:
-            item['ratio'] = item['value'] / matching_count
+        logger.debug("MC.languages: _overview returned %d items", len(top_languages))
+
         # Sort by count
         top_languages = sorted(top_languages, key=lambda x: x['value'], reverse=True)
-        return top_languages[:limit]
+        items = top_languages[:limit]
+
+        logger.debug("MC.languages: returning %d items", len(items))
+        return items
 
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                **kwargs) -> List[Dict]:
-        q = self._assembled_query_str(query, **kwargs)
-        results = self._overview_query(q, start_date, end_date, **kwargs)
-        if self._client._is_no_results(results):
-            return []
-        cleaned_sources = [{"source": source, "count": count} for source, count in results['topdomains'].items()]
-        cleaned_sources = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
-        return cleaned_sources
+                **kwargs: Any) -> List[Source]:
+        logger.debug("MC.sources %s %s %s %r", query, start_date, end_date, kwargs)
+        results = self._overview_query(query, start_date, end_date, **kwargs)
+        items: list[Source]
+        if self._is_no_results(results):
+            items = []
+        else:
+            cleaned_sources = [Source(source=source, count=count) for source, count in results['topdomains'].items()]
+            items = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
+        logger.debug("MC.sources: %d items", len(items))
+        return items
 
     @CachingManager.cache('overview')
-    def _overview_query(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
+    def _overview_query(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Overview:
+        logger.debug("MC._overview %s %s %s %r", query, start_date, end_date, kwargs)
+
+        # no chunking on MC
         q = self._assembled_query_str(query, **kwargs)
+        self._prune_kwargs(kwargs)
         return self._client._overview_query(q, start_date, end_date, **kwargs)
+
+    @classmethod
+    def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs: Any) -> list[str]:
+        """
+        Called by OnlineNewsAbstractProvider.all_items, .words;
+        ignores chunking!
+        """
+        logger.debug("MC._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
+        return [cls._assembled_query_str(base_query, **kwargs)]
+
+################################################################
+# here with original code dragged up from mediacloud.py and news-search-api/api.py
+
+# imports here in case split out into its own file
+import base64
+import json
+import os
+import time
+from typing import Callable, TypeAlias
+
+import elasticsearch
+import mcmetadata.urls as urls
+from elasticsearch_dsl import Search, Response
+from elasticsearch_dsl.document_base import InstrumentedField
+from elasticsearch_dsl.function import RandomScore
+from elasticsearch_dsl.query import FunctionScore, Match, Range, Query, QueryString
+from elasticsearch_dsl.response import Hit
+from elasticsearch_dsl.utils import AttrDict
+
+from .language import terms_without_stopwords
+
+Field: TypeAlias = str | InstrumentedField # quiet mypy complaints
+FilterTuple: TypeAlias = tuple[int, Query | None]
+
+_ES_MAXPAGE = 1000              # define globally (ie; in .providers)???
+
+# return value for _overview
+_EMPTY_OVERVIEW = Overview(query="", total=-1, topdomains={}, toplangs={}, dailycounts={}, matches=[])
+
+# Was publication_date, but web-search always passes indexed_date.
+# identical indexed_date values (without fractional seconds?!)  have
+# been seen in the wild (entire day 2024-01-10).
+_DEF_SORT_FIELD = "indexed_date"
+_DEF_SORT_ORDER = "desc"
+
+# Secondary sort key to break ties if sort_field is non-empty.
+# Used as sole sort key if "sort_field" argument or
+# _DEF_SORT_FIELD (above) is empty string.
+# _doc is documented as most efficient sort key at:
+# https://www.elastic.co/guide/en/elasticsearch/reference/current/sort-search-results.html
+#
+# But at
+# https://www.elastic.co/guide/en/elasticsearch/reference/current/paginate-search-results.html
+#   "Elasticsearch uses Lucene’s internal doc IDs as tie-breakers. These
+#   internal doc IDs can be completely different across replicas of the
+#   same data. When paging search hits, you might occasionally see that
+#   documents with the same sort values are not ordered consistently."
+#
+# HOWEVER: use of session_id/preference should route all requests
+# from the same session to the same shards for each successive query.
+_SECONDARY_SORT_ARGS = {"_doc": "asc"}
+
+def _sanitize(s: str) -> str:
+    """
+    quote slashes to avoid interpretation as /regexp/
+    as done by _sanitize_es_query in mc_providers/mediacloud.py client library
+
+    should only be used by SanitizedQueryString!
+    """
+    return s.replace("/", r"\/")
+
+class SanitizedQueryString(QueryString):
+    """
+    query string (expression) with quoting
+    """
+    def __init__(self, query: str, **kwargs: Any):
+        super().__init__(query=_sanitize(query), **kwargs)
+
+def _format_match(hit: Hit, expanded: bool = False) -> dict:
+    """
+    from news-search-api/client.py EsClientWrapper.format_match
+    """
+    res = {
+        "article_title": getattr(hit, "article_title", None),
+        "publication_date": getattr(hit, "publication_date", "")[:10] or None,
+        "indexed_date": getattr(hit, "indexed_date", None),
+        "language": getattr(hit, "language", None),
+        "full_langauge": getattr(hit, "full_language", None),
+        "url": getattr(hit, "url", None),
+        "original_url": getattr(hit, "original_url", None),
+        "canonical_domain": getattr(hit, "canonical_domain", None),
+        "id": hit.meta.id        # PB: was re-hash of url!
+    }
+    if expanded:
+        res["text_content"] = getattr(hit, "text_content", None)
+    return res
+
+def _format_day_counts(bucket: list) -> Counts:
+    """
+    from news-search-api/client.py EsClientWrapper.format_count
+
+    used to format "dailycounts" aggregation result
+
+    takes [{"key_as_string": "YYYY-MM-DDT00:00:00.000Z", "doc_count": count}, ....]
+    and returns {"YYYY-MM-DD": count, ....}
+    """
+    return {item["key_as_string"][:10]: item["doc_count"] for item in bucket}
+
+def _format_counts(bucket: list) -> Counts:
+    """
+    from news-search-api/client.py EsClientWrapper.format_count
+
+    used to format "topdomains" & "toplangs" aggregation results
+
+    takes [{"key": key, "doc_count": doc_count}, ....]
+    and returns {key: count, ....}
+    """
+    return {item["key"]: item["doc_count"] for item in bucket}
+
+def _b64_encode_page_token(strng: str) -> str:
+    return base64.b64encode(strng.encode(), b"-_").decode().replace("=", "~")
+
+def _b64_decode_page_token(strng: str) -> str:
+    return base64.b64decode(strng.replace("~", "=").encode(), b"-_").decode()
+
+# Used to concatenate multiple sort keys (before b64 encoding) and split
+# after b64 decode.  Must not appear in key values!  Can be multi-character
+# string to lower likelihood of appearing (default keys are numeric).
+_SORT_KEY_SEP = "\x01"
+
+def _get_hits(res: Response) -> list[Hit]:
+    """
+    retrieve hits array from _search results.
+    currently called after all _search() calls
+    """
+    # _search method will have already logged any failed shards.
+    # Response.success() wants
+    # `self._shards.total == self._shards.successful and not self.timed_out`
+    if not res.success():
+        # XXX raise an Exception with useful error message?
+        logger.warn("res.success() is False!")
+        return []
+
+    try:
+        return res.hits
+    except AttributeError:
+        # XXX raise an Exception with useful error message?
+        logger.warn("failed to get res.hits!")
+        return []
+
+class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
+    """
+    version of MC Provider going direct to ES.
+
+    Consolidates query formatting/creation previously spread
+    across multiple files:
+
+    * web-search/mcweb/backend/search/utils.py (url_search_strings)
+    * this file (domain search string)
+    * mc-providers/mc_providers/mediacloud.py (date ranges)
+    * news-search-api/api.py (aggregation result handling)
+    * news-search-api/client.py (DSL, including aggegations)
+
+    NOTE!!! Uses elasticsearch-dsl library as much as possible (rather
+    than hand-formatted JSON/dicts to allow maximum mypy type
+    enforcement!!!  Passing raw JSON means ES may silently not do what
+    you hoped/expected, or may cause ES runtime errors that could have
+    been detected earlier.
+    """
+
+    BASE_URL = "http://ramos.angwin:9200,http://woodward.angwin:9200,http://bradley.angwin:9200"
+    WORDS_SAMPLE = 5000
+
+    def __init__(self, **kwargs: Any):
+        """
+        Supported kwargs:
+
+        "profile": bool or str
+            if True, request profiling data, and log total ES CPU usage
+            CAN pass string (filename) here, but feeding all the
+            resulting JSON files to es-tools/collapse-esperf.py for
+            flamegraphing could get you a mish-mash of different
+            queries' results.
+        "software_id": str (may be displayed by "mc-es-top" as "opaque_id")
+        "session_id": str (user/session id for routing/caching)
+        """
+
+        self._profile: str | bool = kwargs.pop("profile", False)
+        self._profile_current_search: str | bool = False
+
+        # total seconds from the last profiled query:
+        self._last_elastic_ms = -1.0
+
+        # after pop-ing any local-only args:
+        super().__init__(**kwargs)
+
+        eshosts = self._base_url.split(",") # comma separated list of http://SERVER:PORT
+
+        # Retries without delay (never mind backoff!)
+        # web-search creates new Provider for each API request,
+        # so randomize the pool.
+
+        # https://www.elastic.co/guide/en/elasticsearch/reference/current/api-conventions.html
+        # says:
+        #   The X-Opaque-Id header accepts any arbitrary
+        #   value. However, we recommend you limit these values to a
+        #   finite set, such as an ID per client. Don’t generate a
+        #   unique X-Opaque-Id header for every request. Too many
+        #   unique X-Opaque-Id values can prevent Elasticsearch from
+        #   deduplicating warnings in the deprecation logs.
+        # See session_id for per-user/instance identification.
+
+        self._es = elasticsearch.Elasticsearch(eshosts,
+                                               max_retries=3,
+                                               opaque_id=self._software_id,
+                                               request_timeout=self._timeout,
+                                               randomize_nodes_in_pool=True)
+
+
+    def get_client(self):
+        """
+        called from OnlineNewsAbstractProvider constructor to set _client
+        """
+        return None
+
+    def _fields(self, expanded: bool) -> list[Field]:
+        """
+        from news-search-api/client.py QueryBuilder constructor:
+        return list of fields for item, paged_items, all_items to return
+
+        NOTE: In the case of "indexed_date" the mapped field is currently stored
+        with only millisecond resolution, while the stored string usually
+        has microsecond resolution.
+        """
+        fields: list[Field] = [
+            "article_title", "publication_date", "indexed_date",
+            "language", "full_language", "canonical_domain", "url", "original_url"
+        ]
+        if expanded:
+            fields.append("text_content")
+        return fields
+
+    # Allow weighting in order to (experimentally) apply filters in
+    # most efficient order (most selective filter first).  An average
+    # day is about 500K stories for all sources.  1K stories/day would
+    # be a large source.  BUT adding a day means only expanding a
+    # range, not adding another term...
+    SELECTOR_WEIGHT = 1         # domains, filters, url_search_strings
+    DAY_WEIGHT = 1
+
+    @classmethod
+    def _selector_filter_tuple(cls, kwargs: dict) -> FilterTuple:
+        """
+        function to allow construction of DSL
+        rather than restorting to formatting/quoting query-string
+        only to have ES have to parse it??
+        For canonical_domain: "Match" query defaults to OR for space separated words
+        For url: use "Wildcard"??
+        Should initially take temp kwarg bool to allow A/B testing!!!
+        """
+
+        selector_clauses = cls._selector_query_clauses(kwargs)
+        if selector_clauses:
+            sqs = cls._selector_query_string_from_clauses(selector_clauses)
+            return (cls._selector_count(kwargs) * cls.SELECTOR_WEIGHT,
+                    SanitizedQueryString(query=sqs))
+        else:
+            return (0, None)
+
+    def _basic_search(self, user_query: str, start_date: dt.datetime, end_date: dt.datetime,
+                     expanded: bool = False, source: bool = True, **kwargs: Any) -> Search:
+        """
+        from news-search-api/api.py cs_basic_query
+        create a elasticsearch_dsl query from user_query, date range, and kwargs
+        """
+        # works for date or datetime! publication_date is just YYYY-MM-DD
+        start = start_date.strftime("%Y-%m-%d")
+        end = end_date.strftime("%Y-%m-%d")
+
+        self._profile_current_search = kwargs.pop("profile", self._profile)
+
+        # check for extraneous arguments
+        self._check_kwargs(kwargs)
+
+        s = Search(index=self._index_from_dates(start_date, end_date), using=self._es)
+
+        if self._profile_current_search:
+            s = s.extra(profile=True)
+
+        if user_query.strip() != self.everything_query(): # not "*"?
+            s = s.query(SanitizedQueryString(query=user_query, default_field="text_content", default_operator="and"))
+
+        if self._session_id:
+            # pass user-id and/or session
+            #   id to maximize ES caching effectiveness.
+            # https://www.elastic.co/guide/en/elasticsearch/reference/7.17/search-search.html#search-preference
+            #   If the cluster state and selected shards do not
+            #   change, searches using the same <custom-string> value
+            #   (that does not start with "_") are routed to the same
+            #   shards in the same order.
+            s = s.params(preference=self._session_id)
+
+        # Evaluating selectors (domains/filters/url_search_strings) in "filter context";
+        # Supposed to be faster, and enable caching of document set.
+        # https://www.elastic.co/guide/en/elasticsearch/reference/current/query-filter-context.html#filter-context
+
+        # Try to apply filter with the smallest result set (most selective) first,
+        # to cut down document set as soon as possible.
+
+        days = (end_date - start_date).days + 1
+        filters : list[FilterTuple] = [
+            (days * self.DAY_WEIGHT, Range(publication_date={'gte': start, "lte": end})),
+            self._selector_filter_tuple(kwargs)
+            # could include languages (etc) here
+        ]
+
+        # try applying more selective queries (fewer results) first
+        filters.sort()
+        for weight, query in filters:
+            if query:
+                # ends up as list under bool.filter:
+                s = s.filter(query)
+
+        if source:              # return source (fields)?
+            return s.source(self._fields(expanded))
+        else:
+            return s.source(False) # no source fields in hits
+
+    def __repr__(self) -> str:
+        return "OnlineNewsMediaCloudESProvider"
+
+    def _is_no_results(self, results: Overview) -> bool:
+        """
+        used to test _overview_query results
+        """
+        return results is _EMPTY_OVERVIEW
+
+    def _index_from_dates(self, start_date: dt.datetime | None, end_date: dt.datetime | None) -> list[str]:
+        """
+        return list of indices to search for a given date range.
+        if indexing goes back to being split by publication_date (by year or quarter?)
+        this could limit the number of shards that need to be queried
+        """
+        return [self._index]
+
+    def _search(self, search: Search) -> Response:
+        """
+        one place to send queries to ES, for logging
+        """
+        logger.debug("MC._search %r", search.to_dict())
+
+        t0 = time.monotonic()
+        execute_args = {}
+        if self._caching < 0:
+            # Here to try to force ES not to use cached results (for testing).
+            # Only effects in-library caching:
+            execute_args["ignore_cache"] = True
+
+            # This puts ?request_cache=false on the request URL, which
+            # https://www.elastic.co/guide/en/elasticsearch/reference/current/shard-request-cache.html
+            # says "The request_cache query-string parameter can be
+            # used to enable or disable caching on a per-request
+            # basis. If set, it overrides the index-level setting"
+            search = search.params(request_cache=False)
+
+        res = search.execute(**execute_args)
+        elapsed = time.monotonic() - t0
+        logger.info("MC._search ES took %s ms (%.3f elapsed)",
+                    getattr(res, "took", -1), elapsed*1000)
+
+        if (pdata := getattr(res, "profile", None)):
+            self._process_profile_data(pdata)  # displays ES total time
+
+        try:                    # look for circuit breaker trips, etc
+            shards = res._shards
+            if shards:
+                failed = shards.failed
+                total = shards.total
+                if failed:
+                    # hundreds of shards, so summarize...
+                    # (almost always circuit breakers)
+                    reasons: Counter[str] = Counter()
+                    for shard in shards.failures:
+                        rt = shard.reason.type
+                        if rt:
+                            reasons[rt] += 1
+                    logger.info("MC._search %d/%d shards failed; reasons: %r",
+                                failed, total, dict(reasons))
+        except (ValueError, KeyError) as e:
+            logger.debug("error looking at results: %r", e)
+            # XXX raise Exception here??
+        return res
+
+    def _search_hits(self, search: Search) -> list[Hit]:
+        """
+        perform search, return list of Hit
+        """
+        res = self._search(search)
+        return _get_hits(res)
+
+    def _process_profile_data(self, pdata: AttrDict) -> None:
+        """
+        digest profiling data
+        """
+        pcs = self._profile_current_search # saved by _basic_search
+        if isinstance(pcs, str):  # filename prefix?
+            fname = time.strftime(f"{pcs}-%Y-%m-%d-%H-%M-%S.json")
+            with open(fname, "w") as f:
+                json.dump(pdata.to_dict(), f)
+            logger.info("wrote profiling data to %s", fname)
+
+        # sum up ES internal times
+        query_ns = rewrite_ns = coll_ns = agg_ns = 0
+        for shard in pdata.shards: # AttrList
+            for search in shard.searches: # AttrList
+                for q in search.query:    # AttrList
+                    query_ns += q.time_in_nanos
+                for coll in search.collector: # list
+                    coll_ns += coll.time_in_nanos
+                rewrite_ns += search.rewrite_time
+            # XXX sum by aggregation name?
+            for agg in shard.aggregations:
+                agg_ns += agg.time_in_nanos
+        es_nanos = query_ns + rewrite_ns + coll_ns + agg_ns
+        self._last_elastic_ms = es_nanos / 1e6 # convert ns to ms
+        logger.info("ES time: %.3f ms", self._last_elastic_ms)
+
+        # avoid floating point divisions that are likely not displayed:
+        # XXX save components???
+        logger.debug(" ES (ns) query: %d rewrite: %d, collectors: %d aggs: %d",
+                     query_ns, rewrite_ns, coll_ns, agg_ns)
+
+    @CachingManager.cache('overview')
+    def _overview_query(self, q: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Overview:
+        """
+        from news-search-api/api.py
+        returns _EMPTY_OVERVIEW when no hits
+        """
+
+        logger.debug("MC._overview %s %s %s %r", q, start_date, end_date, kwargs)
+
+        # these are arbitrary, but match news-search-api/client.py
+        # so that es-tools/mc-es-top.py can recognize this is an overview query:
+        AGG_DAILY = "dailycounts"
+        AGG_LANG = "toplangs"
+        AGG_DOMAIN = "topdomains"
+
+        search = self._basic_search(q, start_date, end_date, **kwargs)
+        search.aggs.bucket(AGG_DAILY, "date_histogram", field="publication_date",
+                           calendar_interval="day", min_doc_count=1)
+        search.aggs.bucket(AGG_LANG, "terms", field="language.keyword", size=100)
+        search.aggs.bucket(AGG_DOMAIN, "terms", field="canonical_domain", size=100)
+        search = search.extra(track_total_hits=True)
+        res = self._search(search) # run search
+        hits = _get_hits(res)   # get hits list
+        if not hits:
+            return _EMPTY_OVERVIEW # checked by _is_no_results
+
+        # res.hits.total.value documented at
+        # https://elasticsearch-dsl.readthedocs.io/en/stable/search_dsl.html#response
+        total = res.hits.total.value # type: ignore[attr-defined]
+        aggs = res.aggregations
+
+        return Overview(
+            query=q,
+            total=total,
+            topdomains=_format_counts(aggs[AGG_DOMAIN]["buckets"]),
+            toplangs=_format_counts(aggs[AGG_LANG]["buckets"]),
+            dailycounts=_format_day_counts(aggs[AGG_DAILY]["buckets"]),
+            matches=[_format_match(h) for h in hits], # _match_to_row called in .sample()
+        )
+
+    @CachingManager.cache()
+    def item(self, item_id: str) -> Item:
+        expanded = True         # always includes full_text!!
+        s = Search(index=self._index, using=self._es)\
+            .query(Match(_id=item_id))\
+            .source(includes=self._fields(expanded)) 
+        hits = self._search_hits(s)
+        if not hits:
+            return {}
+
+        # double conversion!
+        return self._match_to_row(_format_match(hits[0], expanded))
+
+    def paged_items(
+            self, query: str,
+            start_date: dt.datetime, end_date: dt.datetime,
+            page_size: int = 1000,
+            **kwargs: Any
+    ) -> tuple[list[dict], Optional[str]]:
+        """
+        return a single page of data (with `page_size` items).
+        Pass `None` as first `pagination_token`, after that pass
+        value returned by previous call, until `None` returned.
+
+        `kwargs` may contain: `sort_field` (str), `sort_order` (str)
+        """
+        logger.debug("MC._paged_articles q: %s: %s e: %s ps: %d kw: %r",
+                     query, start_date, end_date, page_size, kwargs)
+
+        page_size = min(page_size, _ES_MAXPAGE)
+        expanded = kwargs.pop("expanded", False)
+        sort_field = kwargs.pop("sort_field", _DEF_SORT_FIELD)
+        sort_order = kwargs.pop("sort_order", _DEF_SORT_ORDER)
+        pagination_token = kwargs.pop("pagination_token", None)
+
+        # NOTE! depends on client limiting to reasonable choices!!
+        # (full text might leak data, or causes memory exhaustion!)
+        if sort_field not in self._fields(expanded):
+            raise ValueError(sort_field)
+        if sort_order not in ["asc", "desc"]:
+            raise ValueError(sort_order)
+
+        # see discussion above at _SECONDARY_SORT_ARGS declaration
+        sort_opts = [
+            {sort_field: sort_order},
+            _SECONDARY_SORT_ARGS
+        ]
+
+        search = self._basic_search(query, start_date, end_date, expanded=expanded, **kwargs)\
+                     .extra(size=page_size, track_total_hits=True)\
+                     .sort(*sort_opts)
+
+        if pagination_token:
+            # may return multiple keys:
+            after = _b64_decode_page_token(pagination_token).split(_SORT_KEY_SEP)
+
+            # important to use `search_after` instead of 'from' for
+            # memory reasons related to paging through more than 10k
+            # results.
+            search = search.extra(search_after=after)
+
+        hits = self._search_hits(search)
+        if not hits:
+            return ([], "")
+
+        if len(hits) == page_size:
+            # generate paging token from all sort keys of last item:
+            new_pt = _b64_encode_page_token(
+                _SORT_KEY_SEP.join([str(key) for key in hits[-1].meta.sort]))
+        else:
+            new_pt = ""
+
+        # double conversion!
+        rows = self._matches_to_rows([_format_match(h, expanded) for h in hits])
+        return (rows, new_pt)
+
+    def all_items(self, query: str,
+                  start_date: dt.datetime, end_date: dt.datetime,
+                  page_size: int = _ES_MAXPAGE, **kwargs: Any) -> AllItems:
+        """
+        returns generator of pages (lists) of items
+        """
+        next_page_token: str | None = None
+        while True:
+            page, next_page_token = self.paged_items(
+                query, start_date, end_date,
+                page_size=page_size,
+                pagination_token=next_page_token,
+                **kwargs)
+
+            if not page:
+                break
+
+            yield page
+
+            if not next_page_token:
+                break
+
+    def _sample_titles(self, query: str, start_date: dt.datetime, end_date: dt.datetime, sample_size: int,
+                             **kwargs: Any) -> Iterable[list[dict[str,str]]]:
+        """
+        helper for generic Provider._sampled_title_words;
+        returns a single page with entire sample_size of dicts
+        """
+        search = self._basic_search(query, start_date, end_date, **kwargs)\
+                     .query(
+                         FunctionScore(
+                             # elasticsearch_dsl v8.17 gives mypy error, bug reported as
+                             # https://github.com/elastic/elasticsearch-dsl-py/issues/1369
+                             # PLEASE REMOVE THIS COMMENT WHEN THE IGNORE BELOW BECOMES UNNECESSARY!
+                             functions=[ # type: ignore[arg-type]
+                                 RandomScore(
+                                     # needed for 100% reproducibility (ie; if paging results)
+                                     # seed=int, field="fieldname"
+                                 )
+                             ]
+                         )
+                     )\
+                     .source(["article_title", "language"])\
+                     .extra(size=sample_size) # everything in one query
+
+        hits = self._search_hits(search)
+        ret = [{"title": hit.article_title, "language": hit.language} for hit in hits]
+        return [ret]            # single page
+
+    def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
+                             **kwargs: Any) -> list[Term]:
+        """
+        uses generic Provider._sampled_title_words
+        with data from local helper above
+        """
+        return self._sampled_title_words(query, start_date, end_date, limit=limit, **kwargs)

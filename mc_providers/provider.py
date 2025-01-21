@@ -1,69 +1,168 @@
-import logging
-from typing import List, Dict, Optional
-import datetime as dt
-import datetime
-from operator import itemgetter
-from abc import ABC
 import collections
-from .exceptions import QueryingEverythingUnsupportedQuery
+import datetime as dt
+import importlib.metadata       # to get version for SOFTWARE_ID
+import logging
+import os
+import re
+from abc import ABC
+from typing import Any, Generator, Iterable, NoReturn, TypeAlias, TypedDict
+from operator import itemgetter
+
+from .exceptions import MissingRequiredValue, QueryingEverythingUnsupportedQuery
 from .language import terms_without_stopwords
+
+logger = logging.getLogger(__name__)
 
 # helpful for turning any date into the standard Media Cloud date format
 MC_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-DEFAULT_WORDS_SAMPLE = 500
-DEFAULT_LANGUAGE_SAMPLE = 1000
+DEFAULT_TIMEOUT = 60  # to be used across all the providers; override via one-time call to set_default_timeout
 
+# from api-client/.../api.py
+try:
+    VERSION = "v" + importlib.metadata.version("mc-providers")
+except importlib.metadata.PackageNotFoundError:
+    VERSION = "dev"
+
+
+def set_default_timeout(timeout: int) -> None:
+    global DEFAULT_TIMEOUT
+    DEFAULT_TIMEOUT = timeout
+
+Item: TypeAlias = dict[str, Any]           # differs between providers?
+Items: TypeAlias = list[Item]              # page of items
+AllItems: TypeAlias = Generator[Items, None, None]
+
+class Date(TypedDict):
+    """
+    element of counts list in count_over_time return
+    """
+    date: dt.date
+    timestamp: int
+    count: int
+
+class CountOverTime(TypedDict):
+    """
+    return type for count_over_time
+    """
+    counts: list[Date]
+
+class Language(TypedDict):
+    """
+    list element in return value for languages method
+    """
+    language: str
+    value: int
+    ratio: float                # really fraction?!
+
+class Source(TypedDict):
+    """
+    list element in return value for sources method
+    """
+    source: str
+    count: int
+
+class Term(TypedDict):
+    """
+    list element in return value for words method
+    """
+    term: str
+    count: int
+    ratio: float                # really fraction?!
 
 class ContentProvider(ABC):
     """
     An abstract wrapper to be implemented for each platform we want to preview content from.
     Any unimplemented methods raise an Exception
     """
+    WORDS_SAMPLE = 500
 
-    def __init__(self):
-        self._logger = logging.getLogger(__name__)
+    LANGUAGE_SAMPLE = 1000
+
+    # default values for _env_val
+    # classes which DON'T require a value should define:
+    #API_KEY = ""
+    #BASE_URL = ""               # subclass can override
+
+    CACHING = 1
+    SESSION_ID = ""
+    SOFTWARE_ID = f"mc-providers {VERSION}"
+    # TIMEOUT *NOT* defined, uses global DEFAULT_TIMEOUT below
+
+    def __init__(self,
+                 api_key: str | None = None,
+                 base_url: str | None = None,
+                 timeout: int | None = None,
+                 caching: int | None = None, # handles bool!
+                 session_id: str | None = None,
+                 software_id: str | None = None):
+        """
+        api_key and base_url only required by some providers, but accept for all.
+        not all providers may use all values, but always accepted to be able
+        to detect erroneous args!
+        """
+
+        self._api_key = self._env_str(api_key, "API_KEY")
+        self._base_url = self._env_str(base_url, "BASE_URL")
+
+        # DEFAULT_TIMEOUT possibly set using set_default_timeout
+        self._timeout = self._env_int(timeout, "TIMEOUT", DEFAULT_TIMEOUT)
+
+        if caching == 0:      # not just any falsey value
+            # False here, to paraphrase Mitt Romney:
+            # yes, my friend, bools are ints
+            self._caching = 0
+        else:
+            self._caching = int(self._env_int(caching, "CACHING"))
+
+        # identify user/session making request (for caching)
+        self._session_id = self._env_str(session_id, "SESSION_ID")
+
+        # identify software making request
+        # (could be used in User-Agent strings)
+        self._software_id = self._env_str(software_id, "SOFTWARE_ID")
 
     def everything_query(self) -> str:
         raise QueryingEverythingUnsupportedQuery()
 
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
-               **kwargs) -> List[Dict]:
+               **kwargs: Any) -> list[dict]:
         raise NotImplementedError("Doesn't support sample content.")
 
-    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> int:
+    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> int:
         raise NotImplementedError("Doesn't support total count.")
 
-    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
+    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
         raise NotImplementedError("Doesn't support counts over time.")
 
-    def item(self, item_id: str) -> Dict:
+    def item(self, item_id: str) -> dict:
         raise NotImplementedError("Doesn't support fetching individual content.")
 
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-              **kwargs) -> List[Dict]:
+              **kwargs: Any) -> list[Term]:
         raise NotImplementedError("Doesn't support top words.")
 
-    def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> List[Dict]:
+    def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> list[Language]:
         raise NotImplementedError("Doesn't support top languages.")
 
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                **kwargs) -> List[Dict]:
+                **kwargs: Any) -> list[Source]:
         raise NotImplementedError("Doesn't support top sources.")
 
     def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000,
-                  **kwargs):
+                  **kwargs: Any) -> AllItems:
+
         # yields a page of items
         raise NotImplementedError("Doesn't support fetching all matching content.")
 
     def paged_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000,
-                    **kwargs) -> tuple[List[Dict], Optional[str]]:
+                    **kwargs: Any) -> tuple[list[dict], str | None]:
         # return just one page of items and a pagination token to get next page; implementing subclasses
         # should read in token, offset, or whatever else they need from `kwargs` to determine which page to return
         raise NotImplementedError("Doesn't support fetching all matching content.")
 
     def normalized_count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
-                                   **kwargs) -> Dict:
+                                   **kwargs: Any) -> dict:
         """
         Useful for rendering attention-over-time charts with extra information suitable for normalizing
         HACK: calling _sum_count_by_date for now to solve a problem specific to the Media Cloud provider
@@ -86,7 +185,7 @@ class ContentProvider(ABC):
         }
 
     @classmethod
-    def _sum_count_by_date(cls, counts: List[Dict]) -> List[Dict]:
+    def _sum_count_by_date(cls, counts: list[dict]) -> list[Date]:
         """
         Given a list of counts, sum the counts by date
         :param counts:
@@ -109,34 +208,141 @@ class ContentProvider(ABC):
 
     # use this if you need to sample some content for top languages
     def _sampled_languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
-                               **kwargs) -> List[Dict]:
+                               **kwargs: Any) -> list[Language]:
         # support sample_size kwarg
-        sample_size = kwargs['sample_size'] if 'sample_size' in kwargs else DEFAULT_LANGUAGE_SAMPLE
+        sample_size = kwargs['sample_size'] if 'sample_size' in kwargs else self.LANGUAGE_SAMPLE
         # grab a sample and count terms as we page through it
         sampled_count = 0
-        counts = collections.Counter()
+        counts: collections.Counter = collections.Counter()
         for page in self.all_items(query, start_date, end_date, limit=sample_size):
             sampled_count += len(page)
             [counts.update(t['language'] for t in page)]
         # clean up results
-        results = [dict(language=w, count=c, ratio=c/sampled_count) for w, c in counts.most_common()]
-        return results[:limit]
+        results = [Language(language=w, value=c, ratio=c/sampled_count) for w, c in counts.most_common(limit)]
+        return results
+
+    def _sample_titles(self, query: str, start_date: dt.datetime, end_date: dt.datetime, sample_size: int,
+                             **kwargs: Any) -> Iterable[list[dict[str,str]]]:
+        """
+        default helper for _sampled_title_words: return a sampling of stories for top words
+        """
+        # XXX force sort on something non-chronological???
+        return self.all_items(query, start_date, end_date, limit=sample_size)
 
     # use this if you need to sample some content for top words
     def _sampled_title_words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                             **kwargs) -> List[Dict]:
+                             **kwargs: Any) -> list[Term]:
         # support sample_size kwarg
-        sample_size = kwargs['sample_size'] if 'sample_size' in kwargs else DEFAULT_WORDS_SAMPLE
+        sample_size = kwargs.pop('sample_size', self.WORDS_SAMPLE)
+        remove_punctuation = bool(kwargs.pop("remove_punctuation", True)) # XXX TEMP?
+
         # grab a sample and count terms as we page through it
         sampled_count = 0
-        counts = collections.Counter()
-        for page in self.all_items(query, start_date, end_date, limit=sample_size):
+        counts: collections.Counter = collections.Counter()
+        for page in self._sample_titles(query, start_date, end_date, sample_size, **kwargs):
             sampled_count += len(page)
-            [counts.update(terms_without_stopwords(t['language'], t['title'])) for t in page]
+            [counts.update(terms_without_stopwords(t['language'], t['title'], remove_punctuation)) for t in page]
         # clean up results
-        results = [dict(term=w, count=c, ratio=c/sampled_count) for w, c in counts.most_common(limit)]
+        results = [Term(term=w, count=c, ratio=c/sampled_count) for w, c in counts.most_common(limit)]
         return results
 
+    # from story-indexer/indexer/story.py:
+    # https://stackoverflow.com/questions/1175208/elegant-python-function-to-convert-camelcase-to-snake-case
+    @classmethod
+    def _env_var(cls, suffix: str) -> str:
+        """
+        create CLASS_NAME_SUFFIX name for environment variable from class name and suffix
+        """
+        name = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", cls.__name__)
+        return re.sub("([a-z0-9])([A-Z])", r"\1_\2", name).upper() + "_" + suffix
+
+    def _missing_value(self, env_var: str) -> NoReturn:
+        """
+        stand-alone to avoid two copies of the below:
+
+        If PROVIDER_XXX and SOURCE_XXX wanted in exception,
+        define PROVIDER_NAME and SOURCE_NAME as class
+        members, *BUT* likely means the
+        {PROVIDER,SOURCE}_XXX variables in __init__.py would
+        need to be defined in this file to avoid a dependency
+        loop!  The the _NAME vars existed, they could be
+        used to create the PROVIDER_MAP from just a list of
+        classes, or a decorator on each class definition!
+        """
+        raise MissingRequiredValue(type(self).__name__, env_var)
+
+    def _env_str(self, kwval: str | None, variable: str, default: str | None = None) -> str:
+        """
+        Here when no kwarg passed to constructor.
+        variable should be UPPER_SNAKE_CASE string matching the kwarg name!
+
+        NOTE! logic duplicated below in _env_int, so likely that any changes
+        neeeded here should be replicated there?!
+
+        MAYBE: prefer env (vs. kwarg likely to have been hard-coded?)
+        """
+        # 0. if kwarg passed, use it
+        if kwval is not None: 
+            logger.debug("%r kwval %s '%s'", self, variable, kwval)
+            return kwval
+
+        env_var = self._env_var(variable)
+        try:
+            # 1. Look for OBJ_NAME_VARIABLE env var, returns value if it exits.
+            val = os.environ[env_var]
+            logger.debug("%r env %s '%s'", self, env_var, val)
+            return val
+        except KeyError:
+            pass
+
+        # 2. If (run-time) default value argument passed, return it.
+        if default is not None:
+            logger.debug("%r default %s '%s'", self, variable, default)
+            return default
+
+        try:
+            # 3. Look for class member named "variable", if it exists, return value
+            val = getattr(self, variable)
+            logger.debug("%r class default %s '%s'", self, variable, val)
+            return val
+        except AttributeError:
+            pass
+
+        # so not "During handling of the above exception"
+        self._missing_value(env_var)
+
+    def _env_int(self, kwval: int | None, variable: str, default: int | None = None) -> int:
+        """
+        ugh: copy of _env_str
+        """
+        if kwval is not None:
+            logger.debug("%r kwval %s %d", self, variable, kwval)
+            return kwval
+
+        env_var = self._env_var(variable)
+        try:
+            # 1. Look for OBJ_NAME_VARIABLE env var, returns value if it exits.
+            val = int(os.environ[env_var])
+            logger.debug("%r env %s %d", self, env_var, val)
+            return val
+        except KeyError:
+            pass
+
+        # 2. If (run-time) default value argument passed, return it.
+        if default is not None:
+            logger.debug("%r default %s %d", self, variable, default)
+            return default
+
+        try:
+            # 3. Look for class member named "variable", if it exists, return value
+            val = getattr(self, variable)
+            logger.debug("%r class default %s %d", self, variable, val)
+            return val
+        except AttributeError:
+            pass
+
+        # so not "During handling of the above exception"
+        self._missing_value(env_var)
 
 def add_missing_dates_to_split_story_counts(counts, start, end, period="day"):
     if start is None and end is None:
@@ -151,12 +357,13 @@ def add_missing_dates_to_split_story_counts(counts, start, end, period="day"):
         else:
             new_counts.append({'date': date_string, 'count': 0})
         if period == "day":
-            current += datetime.timedelta(days=1)
+            current += dt.timedelta(days=1)
         elif period == "month":
-            current += datetime.timedelta(days=31)
+            current += dt.timedelta(days=31)
         elif period == "year":
-            current += datetime.timedelta(days=365)
+            current += dt.timedelta(days=365)
         else:
+            # PB: RuntimeError is for internal Python errors???
             raise RuntimeError("Unsupport time period for filling in missing dates - {}".format(period))
     return new_counts
 

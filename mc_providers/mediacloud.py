@@ -4,6 +4,7 @@ import logging
 import requests
 import time
 import ciso8601
+import time
 
 
 API_VERSION = "v1"  # the API access URL is versioned for future compatability and maintenance
@@ -13,6 +14,7 @@ ALL_RESERVED_CHARS = ['+', '\\', '-', '!', '(', ')', ':', '^', '[', ']', '"', '{
 # However, most query strings are using these characters on purpose, so let's only automatically escape some of them
 RARE_RESERVED_CHARS = ['/']
 
+logger = logging.getLogger(__name__)
 
 def sanitize_query(query: str, reserved_char_list: Optional[List[str]] = None) -> str:
     """
@@ -42,7 +44,7 @@ def dict_to_list(data: Dict) -> List[Dict]:
 
 class MCSearchApiClient:
 
-    API_BASE_URL = "https://news-search-api.tarbell.mediacloud.org/{}/".format(API_VERSION)
+    API_BASE_URL = "http://ramos.angwin/{}/".format(API_VERSION)
     TIMEOUT_SECS = 30
 
     # constants used when requesting top terms
@@ -52,7 +54,7 @@ class MCSearchApiClient:
     TERM_AGGREGATION_SIGNIFICANT = "significant"
     TERM_AGGREGATION_RARE = "rare"
 
-    def __init__(self, collection: str, api_base_url: str = None):
+    def __init__(self, collection: str, api_base_url: str | None = None):
         """
         :param collection: the archive support multiple collections of stories so you have to pass in the
                            name of the collection you want to search against
@@ -62,7 +64,6 @@ class MCSearchApiClient:
         if api_base_url:
             self.API_BASE_URL = api_base_url
         self._session = requests.Session()  # better performance to put all HTTP through this one object
-        self._logger = logging.getLogger(__name__)
 
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> List[Dict]:
         results = self._overview_query(query, start_date, end_date, **kwargs)
@@ -113,8 +114,11 @@ class MCSearchApiClient:
         return "publication_date:[{} TO {}]".format(start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
 
     def _overview_query(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
-        params = {"q": "{} AND {}".format(query, self._date_query_clause(start_date, end_date))}
+        logger.debug("_overview IN: %s %s %s %r", query, start_date, end_date, kwargs)
+        # protect query from grabby ANDs
+        params = {"q": "({}) AND {}".format(query, self._date_query_clause(start_date, end_date))}
         params.update(kwargs)
+        logger.debug("_overview params: %r", params)
         results, _ = self._query("{}/search/overview".format(self._collection), params, method='POST')
         return results
 
@@ -171,23 +175,25 @@ class MCSearchApiClient:
         """
         Centralize making the actual queries here for easy maintenance and testing of HTTP comms
         """
+        logger.debug("_query IN: %s ep %s par %s", method, endpoint, params)
         if params and ('domains' in params):  # remove domains param that might be dangling
             del params['domains']
         if params and ('q' in params):
             params['q'] = sanitize_query(params['q'])
         endpoint_url = self.API_BASE_URL+endpoint
-        start_time = time.time()
+        logger.debug("_query SENDING %s ep %s par %r", method, endpoint_url, params)
+        start = time.time()
         if method == 'GET':
             r = self._session.get(endpoint_url, params=params, timeout=self.TIMEOUT_SECS)
         elif method == 'POST':
             r = self._session.post(endpoint_url, json=params, timeout=self.TIMEOUT_SECS)
         else:
             raise RuntimeError("Unsupported method of '{}'".format(method))
-        duration = time.time() - start_time()
+        duration = time.time() - start
 
         if r.status_code == 504:
-            raise RuntimeError("Client Recieved 504 Gateway Timeout from API after {} Secs. Client Timeout: {}, " 
-                               "Endpoint: {}, Params: {}, ".format(duration, self.TIMEOUT_SECS, endpoint_url, params))
+            raise RuntimeError("API returned 504 Gateway Timeout after {} secs. Client timeout: {},"
+                                "Endpoint: {}, Params: {}".format(duration, self.TIMEOUT_SECS, endpoint_url, params))
 
         if r.status_code >= 500:
             raise RuntimeError("API Server Error {}: a bad query string could have triggered this. Endpoint: {},"

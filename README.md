@@ -3,9 +3,6 @@ Media Cloud Providers Library
 
 A package of search providers for Media Cloud, wrapping up interfaces for different social media platform.
 
-UNDER CONSTRUCTION- Probably won't get a huge amount of attention for a little bit, but I'm putting this 
-up now since I've done this extraction already.
-
 Install with pip (`pip install .`) and the `install.sh` script. 
 
 Requires environment variables set for various interfaces to work correctly.
@@ -21,6 +18,9 @@ Make sure `pip install flit twine` so you can build and deploy to PyPI.
 4. A github action will build and push the repository on committing a tagged version
 
 ### Version History
+* __v3.0.1__ - Fix ES Provider to accept sort_{order,field} paging arguments like NSA-based Provider
+* __v3.0.0__ - New "OnlineNewsMediaCloudProvider" using Elasticsearch DSL for direct access to the ES cluster. Retain old provider as "OnlineNewsMediaCloudOldProvider" for now. 
+* __v2.2.0__ - Added an optional argument to providers to toggle caching behavior, added more specific error on 504
 * __v2.1.1__ - Bugfix
 * __v2.1.0__ - Mediacloud news client code incorperated into this package
 * __v2.0.5__ - Build-system in pyproject.toml

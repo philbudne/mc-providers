@@ -1,5 +1,5 @@
 import datetime as dt
-from typing import List, Dict
+from typing import Any, List, Dict
 import logging
 import dateutil.parser
 import requests
@@ -19,19 +19,18 @@ YT_SEARCH_HEADERS = {
     "x-referer": "https://explorer.apis.google.com",
 }
 
-DEFAULT_TIMEOUT = 60
-
 
 class YouTubeYouTubeProvider(ContentProvider):
     """
     Get matching YouTube videos
     """
 
-    def __init__(self, api_key: str, timeout: int = None):
-        super(YouTubeYouTubeProvider, self).__init__()
-        self._logger = logging.getLogger(__name__)
-        self._api_key = api_key
-        self._timeout = timeout or DEFAULT_TIMEOUT
+    # defaults for constructor
+    #API_KEY MUST be supplied!
+    BASE_URL = YT_SEARCH_API_URL
+
+    def __init__(self, **kwargs: Any):
+        super(YouTubeYouTubeProvider, self).__init__(**kwargs)
         self._session = requests.Session()  # better performance to put all HTTP through this one object
 
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs) -> Dict:
@@ -141,7 +140,7 @@ class YouTubeYouTubeProvider(ContentProvider):
             'order': order,
             'pageToken': page_token,
         }
-        response = self._session.get(YT_SEARCH_API_URL, headers=YT_SEARCH_HEADERS, params=params, timeout=self._timeout)
+        response = self._session.get(self._base_url, headers=YT_SEARCH_HEADERS, params=params, timeout=self._timeout)
         return response.json()
 
     def __repr__(self):
