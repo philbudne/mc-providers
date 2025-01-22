@@ -13,7 +13,7 @@ import numpy as np              # for chunking
 from waybacknews.searchapi import SearchApiClient
 
 from .language import stopwords_for_language
-from .provider import AllItems, ContentProvider, CountOverTime, Date, Item, Items, Language, Source, Term
+from .provider import AllItems, ContentProvider, CountOverTime, Date, Item, Items, Language, Source, Term, Trace
 from .cache import CachingManager
 from .mediacloud import MCSearchApiClient
 
@@ -197,7 +197,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         behavior, we can just put the two different search fields into two different sets of behavior at the top.
         There's obvious room to optimize, but this gets the done job.
         """
-        logger.debug("AP._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
+        cls.trace(Trace.QSTR, "AP._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
         domains = kwargs.get('domains', [])
 
         filters = kwargs.get('filters', [])
@@ -290,7 +290,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         returns a list of query_strings to be OR'ed together
         (to be AND'ed with user query *or* used as a filter)
         """
-        logger.debug("AP._selector_query_clauses IN: %r", kwargs)
+        cls.trace(Trace.QSTR, "AP._selector_query_clauses IN: %r", kwargs)
         selector_clauses = []
 
         domains = kwargs.get('domains', [])
@@ -307,7 +307,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
                     selector_clauses.append(f"({filter})")
                 else:
                     selector_clauses.append(filter)
-        logger.debug("AP._selector_query_clauses OUT: %s", selector_clauses)
+        cls.trace(Trace.QSTR, "AP._selector_query_clauses OUT: %s", selector_clauses)
         return selector_clauses
 
     @classmethod
@@ -328,13 +328,13 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
     @classmethod
     def _assembled_query_str(cls, query: str, **kwargs: Any) -> str:
-        logger.debug("_assembled_query_str IN: %s %r", query, kwargs)
+        cls.trace(Trace.QSTR, "_assembled_query_str IN: %s %r", query, kwargs)
         sqs = cls._selector_query_string(kwargs) # takes dict
         if sqs:
             q = f"({query}) AND ({sqs})"
         else:
             q = query
-        logger.debug("_assembled_query_str OUT: %s", q)
+        cls.trace(Trace.QSTR, "_assembled_query_str OUT: %s", q)
         return q
 
     @classmethod
@@ -437,6 +437,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
     def __init__(self, **kwargs: Any):
         # maybe take comma separated list?
+        # read JSON data with latest date present in each ILM index???
         self._index = self._env_str(kwargs.pop("index_prefix", None), "INDEX_PREFIX") + "-*"
         super().__init__(**kwargs)
 
@@ -486,7 +487,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return a list of query_strings to be OR'ed together
         (to be AND'ed with user query or used as a filter)
         """
-        logger.debug("MC._selector_query_clauses IN: %r", kwargs)
+        cls.trace(Trace.QSTR, "MC._selector_query_clauses IN: %r", kwargs)
         selector_clauses = super()._selector_query_clauses(kwargs)
 
         # Here to try to get web-search out of query
@@ -521,7 +522,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                 selector_clauses.append(
                         match_formatted_search_strings(fuss))
 
-        logger.debug("MC._selector_query_clauses OUT: %s", selector_clauses)
+        cls.trace(Trace.QSTR, "MC._selector_query_clauses OUT: %s", selector_clauses)
         return selector_clauses
 
     @classmethod
@@ -533,7 +534,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return count
 
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> int:
-        logger.debug("MC.count %s %s %s %r", query, start_date, end_date, kwargs)
+        logger.debug("MC.count %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "MC.count kwargs %r", kwargs)
         # no chunking on MC
         results = self._overview_query(query, start_date, end_date, **kwargs)
         return self._count_from_overview(results)
@@ -550,7 +552,9 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return count
 
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
-        logger.debug("MC.count_over_time %s %s %s %r", query, start_date, end_date, kwargs)
+        logger.debug("MC.count_over_time %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "MC.count_over_time kwargs %r", kwargs)
+
         results = self._overview_query(query, start_date, end_date, **kwargs)
         to_return: List[Date] = []
         if not self._is_no_results(results):
@@ -564,22 +568,27 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                     count=data[day_date]
                 ))
         logger.debug("MC.count_over_time %d items", len(to_return))
+        self.trace(Trace.RESULTS, "MC.count_over_time %r", to_return)
         return CountOverTime(counts=to_return)
 
     # NB: limit argument ignored, but included to keep mypy quiet
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20, **kwargs: Any) -> List[Dict]:
-        logger.debug("MC.sample %s %s %s %r", query, start_date, end_date, kwargs)
+        logger.debug("MC.sample %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "MC.sample kwargs %r", kwargs)
+
         results = self._overview_query(query, start_date, end_date, **kwargs)
         if self._is_no_results(results):
             rows = []
         else:
             rows = self._matches_to_rows(results['matches'])
         logger.debug("MC.sample: %d rows", len(rows))
+        self.trace(Trace.RESULTS, "MC.sample %r", rows)
         return rows             # could slice w/ [:limit]!
 
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
                   **kwargs: Any) -> List[Language]:
-        logger.debug("MC.languages %s %s %s %r", query, start_date, end_date, kwargs)
+        logger.debug("MC.languages %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "MC.languages kwargs %r", kwargs)
         kwargs.pop("sample_size", None)
         results = self._overview_query(query, start_date, end_date, **kwargs)
         if self._is_no_results(results):
@@ -594,11 +603,13 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         items = top_languages[:limit]
 
         logger.debug("MC.languages: returning %d items", len(items))
+        self.trace(Trace.RESULTS, "MC.languages %r", items)
         return items
 
     def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                 **kwargs: Any) -> List[Source]:
-        logger.debug("MC.sources %s %s %s %r", query, start_date, end_date, kwargs)
+        logger.debug("MC.sources %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "MC.sources kwargs %r", kwargs)
         results = self._overview_query(query, start_date, end_date, **kwargs)
         items: list[Source]
         if self._is_no_results(results):
@@ -607,11 +618,13 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             cleaned_sources = [Source(source=source, count=count) for source, count in results['topdomains'].items()]
             items = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
         logger.debug("MC.sources: %d items", len(items))
+        self.trace(Trace.RESULTS, "MC.sources %r", items)
         return items
 
     @CachingManager.cache('overview')
     def _overview_query(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Overview:
-        logger.debug("MC._overview %s %s %s %r", query, start_date, end_date, kwargs)
+        logger.debug("MC._overview %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "MC._overview kwargs %r", kwargs)
 
         # no chunking on MC
         q = self._assembled_query_str(query, **kwargs)
@@ -624,7 +637,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         Called by OnlineNewsAbstractProvider.all_items, .words;
         ignores chunking!
         """
-        logger.debug("MC._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
+        cls.trace(Trace.QSTR, "MC._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
         return [cls._assembled_query_str(base_query, **kwargs)]
 
 ################################################################
@@ -646,15 +659,12 @@ from elasticsearch_dsl.query import FunctionScore, Match, Range, Query, QueryStr
 from elasticsearch_dsl.response import Hit
 from elasticsearch_dsl.utils import AttrDict
 
-from .language import terms_without_stopwords
+from .exceptions import MysteryProviderException, ProviderParseException, PermanentProviderException, ProviderException, TemporaryProviderException
 
 Field: TypeAlias = str | InstrumentedField # quiet mypy complaints
 FilterTuple: TypeAlias = tuple[int, Query | None]
 
 _ES_MAXPAGE = 1000              # define globally (ie; in .providers)???
-
-# return value for _overview
-_EMPTY_OVERVIEW = Overview(query="", total=-1, topdomains={}, toplangs={}, dailycounts={}, matches=[])
 
 # Was publication_date, but web-search always passes indexed_date.
 # identical indexed_date values (without fractional seconds?!)  have
@@ -747,26 +757,6 @@ def _b64_decode_page_token(strng: str) -> str:
 # string to lower likelihood of appearing (default keys are numeric).
 _SORT_KEY_SEP = "\x01"
 
-def _get_hits(res: Response) -> list[Hit]:
-    """
-    retrieve hits array from _search results.
-    currently called after all _search() calls
-    """
-    # _search method will have already logged any failed shards.
-    # Response.success() wants
-    # `self._shards.total == self._shards.successful and not self.timed_out`
-    if not res.success():
-        # XXX raise an Exception with useful error message?
-        logger.warn("res.success() is False!")
-        return []
-
-    try:
-        return res.hits
-    except AttributeError:
-        # XXX raise an Exception with useful error message?
-        logger.warn("failed to get res.hits!")
-        return []
-
 class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     """
     version of MC Provider going direct to ES.
@@ -790,10 +780,15 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     BASE_URL = "http://ramos.angwin:9200,http://woodward.angwin:9200,http://bradley.angwin:9200"
     WORDS_SAMPLE = 5000
 
+    # elasticsearch ApiError meta.status codes to translate to TemporaryProviderException
+    APIERROR_STATUS_TEMPORARY = [408, 429, 502, 503, 504]
+
     def __init__(self, **kwargs: Any):
         """
         Supported kwargs:
 
+        "partial_responses": bool (TEMPORARY?)
+            if True, return response data, even if incomplete
         "profile": bool or str
             if True, request profiling data, and log total ES CPU usage
             CAN pass string (filename) here, but feeding all the
@@ -809,6 +804,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         # total seconds from the last profiled query:
         self._last_elastic_ms = -1.0
+
+        self._partial_responses = kwargs.pop("partial_responses", False) # TEMPORARY?
 
         # after pop-ing any local-only args:
         super().__init__(**kwargs)
@@ -952,7 +949,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
         used to test _overview_query results
         """
-        return results is _EMPTY_OVERVIEW
+        # or len(results["hits"]) == 0
+        return results["total"] == 0
 
     def _index_from_dates(self, start_date: dt.datetime | None, end_date: dt.datetime | None) -> list[str]:
         """
@@ -966,8 +964,6 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
         one place to send queries to ES, for logging
         """
-        logger.debug("MC._search %r", search.to_dict())
-
         t0 = time.monotonic()
         execute_args = {}
         if self._caching < 0:
@@ -982,32 +978,40 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # basis. If set, it overrides the index-level setting"
             search = search.params(request_cache=False)
 
-        res = search.execute(**execute_args)
-        elapsed = time.monotonic() - t0
-        logger.info("MC._search ES took %s ms (%.3f elapsed)",
-                    getattr(res, "took", -1), elapsed*1000)
+        try:
+            res = search.execute(**execute_args)
+        except elasticsearch.exceptions.TransportError as e:
+            logger.debug("%r: %r", e, search.to_dict())
+            raise TemporaryProviderException("networking") from e
+        except elasticsearch.exceptions.ApiError as e:
+            logger.debug("%r: %r", e, search.to_dict())
+            # Messages will almost certainly need massage to be
+            # end-user friendly!  It would be preferable to translate
+            # them here, but it will require time to acquire the
+            # (arcane) knowledge and experience.
+            try:
+                for cause in e.body["error"]["root_cause"]:
+                    short = cause["type"]
+                    long = cause["reason"]
+                    if short == "parse_exception":
+                        raise self._parse_exception(long)
+            except (LookupError, TypeError):
+                logger.debug("could not get root_cause: %r", e.body)
+                short = str(e)
+                long = repr(e)
+
+            if e.error in self.APIERROR_STATUS_TEMPORARY:
+                raise TemporaryProviderException(short, long) from e
+            raise PermanentProviderException(short, long) from e
+
+        logger.debug("MC._search ES took %s ms", getattr(res, "took", -1))
 
         if (pdata := getattr(res, "profile", None)):
             self._process_profile_data(pdata)  # displays ES total time
 
-        try:                    # look for circuit breaker trips, etc
-            shards = res._shards
-            if shards:
-                failed = shards.failed
-                total = shards.total
-                if failed:
-                    # hundreds of shards, so summarize...
-                    # (almost always circuit breakers)
-                    reasons: Counter[str] = Counter()
-                    for shard in shards.failures:
-                        rt = shard.reason.type
-                        if rt:
-                            reasons[rt] += 1
-                    logger.info("MC._search %d/%d shards failed; reasons: %r",
-                                failed, total, dict(reasons))
-        except (ValueError, KeyError) as e:
-            logger.debug("error looking at results: %r", e)
-            # XXX raise Exception here??
+        # look for circuit breaker trips, etc
+        self._check_response(res)
+
         return res
 
     def _search_hits(self, search: Search) -> list[Hit]:
@@ -1015,7 +1019,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         perform search, return list of Hit
         """
         res = self._search(search)
-        return _get_hits(res)
+        return res.hits
 
     def _process_profile_data(self, pdata: AttrDict) -> None:
         """
@@ -1049,14 +1053,111 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         logger.debug(" ES (ns) query: %d rewrite: %d, collectors: %d aggs: %d",
                      query_ns, rewrite_ns, coll_ns, agg_ns)
 
+    def _check_response(self, res: Response) -> None:
+        """
+        This worker method only needed to implement "partial_responses"
+        hack, an emergency ripcord in case the now visible circuit
+        breaker errors so often that it's deemed necessary to ignore them!
+
+        NOTE!!! Because this code is complex and brittle, and the
+        actual errors don't grow on trees, this method has a test
+        suite of its very own, which can be run by incanting:
+
+        venv/bin/pip install python-dotenv pytest # only needed once
+        venv/bin/pytest mc_providers/test/test_onlinenews_errors.py
+
+        The tests don't require any access to an Elasticsearch server
+        (SO YOU SHOULDN'T HAVE ANY EXCUSE NOT TO RUN THEM!)
+
+        AND, If you add code that handles new cases, please add tests!!
+        """
+        # Response.success() wants
+        # `._shards.total == ._shards.successful and not .timed_out`
+        if res.success():
+            return              # our work is done!
+
+        # see the above comment: limited to testing fields
+        # that Response.success() looks at!
+        shards = res._shards
+        if shards.total != shards.successful:
+            # process per-shard errors
+            parse_error = ''
+            permanent_shard_error = None
+            permanent_type = ''
+
+            # hundreds of shards, so summarize...
+            # (almost always circuit breakers)
+            reasons: Counter[str] = Counter()
+            for shard in shards.failures:
+                try:
+                    # NOTE! ordered carefully, with things most likely to be present first
+                    reason = shard.reason
+                    if getattr(reason, "durability", "") == "PERMANENT" and not permanent_shard_error:
+                        permanent_shard_error = shard
+
+                    rt = reason.type
+                    if rt:
+                        reasons[rt] += 1
+                        # below here things may not be present!
+                        if "caused_by" in reason:
+                            caused_by = reason.caused_by
+                            if caused_by.type == "parse_exception" and not parse_error:
+                                parse_error = getattr(caused_by, "reason", "parse error")
+                except AttributeError as e:
+                    # safety net
+                    logger.debug("_check_response shard %r exception %r", shard, e)
+
+            # have seen parse error PLUS permanent circuit breaker error!
+            if parse_error:
+                if len(reasons) > 1:
+                    logger.debug("parse_error with others %r", reasons)
+                raise self._parse_exception(parse_error)
+
+            # after parse error
+            logger.info("MC._search %d/%d shards failed; reasons: %r", shards.failed, shards.total, reasons)
+
+            # have seen
+            # type == "circuit_breaking_exception",
+            # reason == "[fielddata] Data too large, data for [Global Ordinals] ....."
+            # durability == "PERMANENT"
+            if permanent_shard_error:
+                logger.warning("permanent error %r", permanent_shard_error.to_dict())
+                pser = permanent_shard_error.reason
+                raise PermanentProviderException(pser.type, pser.reason)
+
+            if "circuit_breaking_exception" in reasons:
+                # NOTE! checking late so that above logging occurs
+                if self._partial_responses:
+                    logger.info("returning partial results")
+                    return
+                raise TemporaryProviderException("Out of memory")
+
+            logger.error("Unknown response error %r", res.to_dict())
+            raise MysteryProviderException(shards.failures[0].reason.type,
+                                           shards.failures[0].reason.reason)
+        elif res.timed_out:
+            logger.info("elasticsearch response has timed_out set")
+            raise TemporaryProviderException("Timed out")
+
+        # likely here because Response.success() has changed?!
+        logger.error("Unknown response error %r", res.to_dict())
+        raise MysteryProviderException("Unknown error")
+
+    def _parse_exception(self, multiline: str) -> ProviderParseException:
+        """
+        take multiline parser error, and return ProviderParseException
+        """
+        first, rest = multiline.split("\n", 1)
+        return ProviderParseException(first, rest)
+
     @CachingManager.cache('overview')
     def _overview_query(self, q: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Overview:
         """
         from news-search-api/api.py
-        returns _EMPTY_OVERVIEW when no hits
         """
 
-        logger.debug("MC._overview %s %s %s %r", q, start_date, end_date, kwargs)
+        logger.debug("MCES._overview %s %s %s", q, start_date, end_date)
+        self.trace(Trace.QSTR, "MCES._overview kwargs %r", kwargs)
 
         # these are arbitrary, but match news-search-api/client.py
         # so that es-tools/mc-es-top.py can recognize this is an overview query:
@@ -1070,19 +1171,15 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         search.aggs.bucket(AGG_LANG, "terms", field="language.keyword", size=100)
         search.aggs.bucket(AGG_DOMAIN, "terms", field="canonical_domain", size=100)
         search = search.extra(track_total_hits=True)
-        res = self._search(search) # run search
-        hits = _get_hits(res)   # get hits list
-        if not hits:
-            return _EMPTY_OVERVIEW # checked by _is_no_results
+        res = self._search(search) # run search, need .aggregations & .hits
 
-        # res.hits.total.value documented at
-        # https://elasticsearch-dsl.readthedocs.io/en/stable/search_dsl.html#response
-        total = res.hits.total.value # type: ignore[attr-defined]
+        hits = res.hits            # property
         aggs = res.aggregations
-
         return Overview(
             query=q,
-            total=total,
+            # res.hits.total.value documented at
+            # https://elasticsearch-dsl.readthedocs.io/en/stable/search_dsl.html#response
+            total=hits.total.value, # type: ignore[attr-defined]
             topdomains=_format_counts(aggs[AGG_DOMAIN]["buckets"]),
             toplangs=_format_counts(aggs[AGG_LANG]["buckets"]),
             dailycounts=_format_day_counts(aggs[AGG_DAILY]["buckets"]),
@@ -1115,8 +1212,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         `kwargs` may contain: `sort_field` (str), `sort_order` (str)
         """
-        logger.debug("MC._paged_articles q: %s: %s e: %s ps: %d kw: %r",
-                     query, start_date, end_date, page_size, kwargs)
+        logger.debug("MCES._paged_articles q: %s: %s e: %s ps: %d",
+                     query, start_date, end_date, page_size)
+        self.trace(Trace.QSTR, "MCES._paged_articles kw: %r", kwargs)
 
         page_size = min(page_size, _ES_MAXPAGE)
         expanded = kwargs.pop("expanded", False)
@@ -1163,6 +1261,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         # double conversion!
         rows = self._matches_to_rows([_format_match(h, expanded) for h in hits])
+        self.trace(Trace.RESULTS, "MCES next %s rows %r", new_pt, rows)
         return (rows, new_pt)
 
     def all_items(self, query: str,
@@ -1196,7 +1295,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         search = self._basic_search(query, start_date, end_date, **kwargs)\
                      .query(
                          FunctionScore(
-                             # elasticsearch_dsl v8.17 gives mypy error, bug reported as
+                             # elasticsearch_dsl v8.17 gives mypy error, phil reported as
                              # https://github.com/elastic/elasticsearch-dsl-py/issues/1369
                              # PLEASE REMOVE THIS COMMENT WHEN THE IGNORE BELOW BECOMES UNNECESSARY!
                              functions=[ # type: ignore[arg-type]

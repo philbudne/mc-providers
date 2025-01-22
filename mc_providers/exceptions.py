@@ -1,3 +1,4 @@
+from typing import Any
 
 class ProviderException(Exception):
     pass
@@ -25,3 +26,42 @@ class QueryingEverythingUnsupportedQuery(ProviderException):
 # backwards compatibility:
 APIKeyRequired = MissingRequiredValue
 UnavailableProviderException = UnknownProviderException
+
+class BifurcatedProviderException(ProviderException):
+    """
+    base class for returning both end-user friendly and detailed info
+    for optional display
+    """
+    def __init__(self, friendly: str, detail: Any = None):
+        self.friendly = friendly
+        self.detail = detail
+
+    def __str__(self):
+        return self.friendly
+
+    def __repr__(self):
+        return f"{type(self).__name__}({self.friendly!r},{self.detail!r})"
+
+class TemporaryProviderException(BifurcatedProviderException):
+    """
+    Query failed for a temporary reason.
+    """
+
+class PermanentProviderException(BifurcatedProviderException):
+    """
+    Query failed for a permanent reason.
+    """
+
+class MysteryProviderException(BifurcatedProviderException):
+    """
+    Query failed for a unknown reason, not known whether permanent or temporary!
+    """
+
+# subclasses of Permanent/Temporary/Mystery:
+# add new ones to identify particular classes of errors, and to
+# signify that an end-user-friendly string is returned by str()
+
+class ProviderParseException(PermanentProviderException):
+    """
+    Query string failed to parse
+    """
