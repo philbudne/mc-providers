@@ -1250,14 +1250,13 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         hits = self._search_hits(search)
         if not hits:
-            return ([], "")
+            return ([], None)
 
+        new_pt: str | None = None
         if len(hits) == page_size:
             # generate paging token from all sort keys of last item:
             new_pt = _b64_encode_page_token(
                 _SORT_KEY_SEP.join([str(key) for key in hits[-1].meta.sort]))
-        else:
-            new_pt = ""
 
         # double conversion!
         rows = self._matches_to_rows([_format_match(h, expanded) for h in hits])
