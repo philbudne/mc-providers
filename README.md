@@ -18,6 +18,7 @@ Make sure `pip install flit twine` so you can build and deploy to PyPI.
 4. A github action will build and push the repository on committing a tagged version
 
 ### Version History
+* __v3.1.1__ - Fix ES Provider to send None as last page pagination token
 * __v3.1.0__ - Add new ProviderException classes to pass more meaningful errors to consumer processes
 * __v3.0.1__ - Fix ES Provider to accept sort_{order,field} paging arguments like NSA-based Provider
 * __v3.0.0__ - New "OnlineNewsMediaCloudProvider" using Elasticsearch DSL for direct access to the ES cluster. Retain old provider as "OnlineNewsMediaCloudOldProvider" for now. 
