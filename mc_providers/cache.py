@@ -13,16 +13,20 @@ class CachingManager():
     Use this to set caching functionality on the providers library for whatever system your using
     something like:
     `CachingManager.cache_function = your_cache_function`
-    your_cache_function should have a signature like (function_to_cache, cache_prefix, args, kwargs) -> tuple[Any, bool]
+    your_cache_function should have a signature like (function_to_cache, cache_prefix, seconds, args, kwargs) -> tuple[Any, bool]
     (second item in tuple indicatin if it was cached or not already)
     """
     cache_function = None
 
     # typing from https://stackoverflow.com/questions/47060133/python-3-type-hinting-for-decorator
     @classmethod
-    def cache(cls, custom_prefix_for_key: Optional[str] = None, kwargs_to_ignore: Iterable[str] = []) -> Callable[[Callable[Param, RetType]], Callable[Param, RetType]]:
+    def cache(cls, custom_prefix_for_key: Optional[str] = None,
+              kwargs_to_ignore: Iterable[str] = [],
+              seconds: Optional[int] = None) -> Callable[[Callable[Param, RetType]], Callable[Param, RetType]]:
         """
         @param custom_prefix_for_key: if specified, will be used in place of function name for cache_key generation
+        @param kwargs_to_ignore: if specified, list of kwargs not to include in generated key
+        @param seconds: if specified, number of seconds to cache data
         """
         def decorator(fn: Callable[Param, RetType]) -> Callable[Param, RetType]:
             # WISH: detect if 'fn' is being declared as a method to a ContentProvider!!
@@ -40,7 +44,11 @@ class CachingManager():
                         for kw in kwargs_to_ignore:
                             if kw in kwargs:
                                 kwargs.pop(kw)
-                    results, was_cached = cls.cache_function(fn, cache_prefix, *args, **kwargs)
+                    # ****NOTE***** This changes the cache_function signature
+                    # and REQUIRES changing the web-search supplied cache_function!!!!
+                    # This is a "breaking change" and (in theory) should require
+                    # a major version bump (tho survivable with a minor version bump).
+                    results, was_cached = cls.cache_function(fn, cache_prefix, seconds, *args, **kwargs)
                     return results
                 else:
                     return fn(*args, **kwargs)
