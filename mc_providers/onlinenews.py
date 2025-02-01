@@ -285,6 +285,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         cls._prune_kwargs(kwcopy)
         if kwcopy:
             exstring = ", ".join(kwcopy) # join key names
+            # If here with "_seconds", client's cache_function needs updating!
             raise TypeError(f"unknown keyword args: {exstring}")
 
     @classmethod
@@ -1099,7 +1100,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                 if start_pub_date_str > last_indexed:
                     break
                 ret.append(name)
-            print(start_pub_date_str, ret)
+            logger.info("subindex_list %s %r", start_pub_date_str, ret) # LOWER TO DEBUG!
             return ret
         else:
             return [self._index]

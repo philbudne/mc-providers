@@ -13,8 +13,9 @@ class CachingManager():
     Use this to set caching functionality on the providers library for whatever system your using
     something like:
     `CachingManager.cache_function = your_cache_function`
-    your_cache_function should have a signature like (function_to_cache, cache_prefix, seconds, args, kwargs) -> tuple[Any, bool]
+    your_cache_function should have a signature like (function_to_cache, cache_prefix, args, kwargs) -> tuple[Any, bool]
     (second item in tuple indicatin if it was cached or not already)
+    kwargs WILL contain _seconds argument which should be pop'ed before calling `function_to_cache`
     """
     cache_function = None
 
@@ -44,11 +45,7 @@ class CachingManager():
                         for kw in kwargs_to_ignore:
                             if kw in kwargs:
                                 kwargs.pop(kw)
-                    # ****NOTE***** This changes the cache_function signature
-                    # and REQUIRES changing the web-search supplied cache_function!!!!
-                    # This is a "breaking change" and (in theory) should require
-                    # a major version bump (tho survivable with a minor version bump).
-                    results, was_cached = cls.cache_function(fn, cache_prefix, seconds, *args, **kwargs)
+                    results, was_cached = cls.cache_function(fn, cache_prefix, *args, **kwargs, _seconds=seconds)
                     return results
                 else:
                     return fn(*args, **kwargs)
