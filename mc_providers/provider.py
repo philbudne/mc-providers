@@ -35,7 +35,7 @@ def set_default_timeout(timeout: int) -> None:
 
 Item: TypeAlias = dict[str, Any]           # differs between providers?
 Items: TypeAlias = list[Item]              # page of items
-AllItems: TypeAlias = Generator[Items, None, None]
+AllItems: TypeAlias = Iterable[Items]      # iterable of pages
 
 class Date(TypedDict):
     """
@@ -152,6 +152,7 @@ class ContentProvider(ABC):
     def everything_query(self) -> str:
         raise QueryingEverythingUnsupportedQuery()
 
+    # historically not a random semaple, see random_sample below!
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
                **kwargs: Any) -> list[dict]:
         raise NotImplementedError("Doesn't support sample content.")
@@ -187,6 +188,11 @@ class ContentProvider(ABC):
         # return just one page of items and a pagination token to get next page; implementing subclasses
         # should read in token, offset, or whatever else they need from `kwargs` to determine which page to return
         raise NotImplementedError("Doesn't support fetching all matching content.")
+
+    def random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
+                      page_size: int, fields: list[str], **kwargs: Any) -> AllItems:
+        # NOTE! could be subsumed by passing keyword arguments (fields, randomize) to all_items?!
+        raise NotImplementedError("Doesn't support fetching random sample.")
 
     def normalized_count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
                                    **kwargs: Any) -> dict:
@@ -243,7 +249,7 @@ class ContentProvider(ABC):
         counts: collections.Counter = collections.Counter()
         for page in self.all_items(query, start_date, end_date, limit=sample_size):
             sampled_count += len(page)
-            [counts.update(t['language'] for t in page)]
+            [counts.update(t.get('language', "UNK") for t in page)]
         # clean up results
         results = [Language(language=w, value=c, ratio=c/sampled_count) for w, c in counts.most_common(limit)]
         return results
@@ -253,14 +259,15 @@ class ContentProvider(ABC):
         """
         default helper for _sampled_title_words: return a sampling of stories for top words
         """
-        # XXX force sort on something non-chronological???
-        return self.all_items(query, start_date, end_date, limit=sample_size)
+        return self.random_sample(query, start_date, end_date, sample_size,
+                                  fields=["title", "language"], **kwargs)
 
     # use this if you need to sample some content for top words
     def _sampled_title_words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                              **kwargs: Any) -> list[Term]:
         # support sample_size kwarg
         sample_size = kwargs.pop('sample_size', self.WORDS_SAMPLE)
+        # NOTE! english stopwords contain contractions!!!
         remove_punctuation = bool(kwargs.pop("remove_punctuation", True)) # XXX TEMP?
 
         # grab a sample and count terms as we page through it
@@ -268,7 +275,13 @@ class ContentProvider(ABC):
         counts: collections.Counter = collections.Counter()
         for page in self._sample_titles(query, start_date, end_date, sample_size, **kwargs):
             sampled_count += len(page)
-            [counts.update(terms_without_stopwords(t['language'], t['title'], remove_punctuation)) for t in page]
+            [counts.update(terms_without_stopwords(t.get('language', 'UNK'), t['title'], remove_punctuation)) for t in page  if 'title' in t]
+            needed = sample_size - sampled_count
+            if needed <= 0:
+                break           # quit once sample_size filled
+            if needed < sample_size:
+                sample_size = needed # don't overfill
+
         # clean up results
         results = [Term(term=w, count=c, ratio=c/sampled_count) for w, c in counts.most_common(limit)]
         self.trace(Trace.RESULTS, "_sampled_title_words %r", results)

@@ -369,7 +369,7 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         assert page1_url1 not in page2_urls  # verify pages don't overlap
         page2_first = page2[0][out_field]
         page2_last = page2[-1][out_field]
-        assert page2_first < page1_last
+        assert page2_first <= page1_last
         assert page2_first > page2_last
 
     def test_paged_items_asc(self):
@@ -439,6 +439,53 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         # unfixed code died with "TypeError: '<' not supported between instances of 'SanitizedQueryString' and 'Range'"
         page1, _ = self._provider.paged_items(query, start_date, end_date, domains=domains, page_size=1)
 
+    def _collect_random_results(self, query, fields, page_size, start, end):
+        start_date = start or dt.datetime(2023, 1, 1)
+        end_date = end or dt.datetime(2023, 12, 31)
+        results = []
+        # currently returns only one page, but be prepared!
+        for page in self._provider.random_sample(query, start_date, end_date,
+                                                 page_size=page_size, fields=fields):
+            results.extend(page)
+        return results
+
+    def _test_random_sample(self, fields, page_size, start=None, end=None):
+        # check page_size filled
+        results = self._collect_random_results("biden", fields, page_size, start, end)
+        assert len(results) == page_size
+
+        fset = set(fields)
+        for item in results:
+            # check all fields returned
+            assert set(item.keys()) == fset
+
+            for key, value in item.items():
+                if key == "id":
+                    assert isinstance(value, str)
+                    assert len(value) >= 64
+                elif key == "indexed_date":
+                    assert isinstance(value, dt.datetime)
+                elif key == "publish_date":
+                    assert isinstance(value, dt.date)
+                elif key in ("language", "media_name", "media_url", "text",
+                             "title", "url"):
+                    assert isinstance(value, str)
+                    assert len(value) >= 2
+
+    def test_random_sample_lang_title(self):
+        self._test_random_sample(["title", "language"], 1000)
+
+    def test_random_sample_lang(self):
+        self._test_random_sample(["language"], 1000)
+
+    def test_random_sample_id(self):
+        # id requires special handling
+        self._test_random_sample(["id"], 10000)
+
+    def test_random_sample_all(self):
+        self._test_random_sample(["id", "indexed_date", "language",
+                                  "media_name", "media_url", "publish_date",
+                                  "text", "title", "url"], page_size=2)
 
 @pytest.mark.skipif(IN_GITHUB_CI_WORKFLOW, reason="requires VPN tunnel to Media Cloud News Search API server")
 class OnlineNewsMediaCloudOldProviderTest(OnlineNewsWaybackMachineProviderTest):
@@ -514,3 +561,6 @@ class OnlineNewsMediaCloudOldProviderTest(OnlineNewsWaybackMachineProviderTest):
         assert len(story['title']) > 0
         assert story['language'] == 'en'
         assert story['media_name'] == 'cnn.com'
+
+    # THIS IS (almost certainly) NOT THE CLASS YOU'RE LOOKING FOR
+    # (tests for Old Provider)
