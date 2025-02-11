@@ -1043,7 +1043,10 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         search = Search(index=name, using=self._es).extra(size=0) # just aggs
         search.aggs.bucket(AGG, 'max', field='indexed_date')
+
+        self._incr_query_op("get-last-indexed")
         res = search.execute()
+        # XXX maybe call _check_response(res)??
         t = res["aggregations"][AGG]["value_as_string"]
         assert isinstance(t, str)
         return t[:10]           # YYYY-MM-DD
