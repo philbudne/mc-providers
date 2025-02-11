@@ -855,6 +855,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     # elasticsearch ApiError meta.status codes to translate to TemporaryProviderException
     APIERROR_STATUS_TEMPORARY = [408, 429, 502, 503, 504]
 
+    USE_SUBINDEX_LIST = False   # default to searching all ILM sub-indices
+
     def __init__(self, **kwargs: Any):
         """
         Supported kwargs:
@@ -1033,18 +1035,16 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
     def _get_last_indexed(self, name: str) -> str:
         """
-        return max indexed_date (for an ILM sub-index)
-        only takes a few milliseconds
+        Called from _get_subindices (caches results for all indices).
+        returns max indexed_date in a (sub)index.
+        only takes a few milliseconds.
         """
-        agg = "max_indexed"
-        maxquery = {
-            "size": 0,          # just the aggs ma'am
-            "aggs": {
-                agg: { "max": { "field": "indexed_date" } }
-            }
-        }
-        res = self._es.search(index=name, body=maxquery)
-        t = res["aggregations"][agg]["value_as_string"]
+        AGG = "max_indexed"
+
+        search = Search(index=name, using=self._es).extra(size=0) # just aggs
+        search.aggs.bucket(AGG, 'max', field='indexed_date')
+        res = search.execute()
+        t = res["aggregations"][AGG]["value_as_string"]
         assert isinstance(t, str)
         return t[:10]           # YYYY-MM-DD
 
@@ -1055,7 +1055,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         picked up from self._index) so included in hash key
         for paranoia in case index switched for testing!!!
 
-        return ordered list of [last_indexed_date_str, subindex_name]
+        returns ordered list of [last_indexed_date_str, subindex_name]
         sorted in descending order
         """
         # "indices.get" returns lots of data, none of it useful
@@ -1071,9 +1071,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         # sort in descending order by date of last indexed story
         # should be same as descending sort on name!!!
         subindices.sort(reverse=True)
+        print(subindices)
         return subindices
-
-    USE_SUBINDEX_LIST = True
 
     def _index_from_dates(self, start_date: dt.datetime, end_date: dt.datetime) -> list[str]:
         """
@@ -1094,16 +1093,18 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             start_pub_datetime = start_date - dt.timedelta(days=31)
             start_pub_date_str = start_pub_datetime.date().isoformat()
 
-            ret: list[str] = []
-            for last_indexed, name in self._get_subindices(self._index):
-                # quit as soon as next oldest index can't contain anything
-                if start_pub_date_str > last_indexed:
-                    break
-                ret.append(name)
-            logger.info("subindex_list %s %r", start_pub_date_str, ret) # LOWER TO DEBUG!
-            return ret
-        else:
-            return [self._index]
+            try:
+                ret: list[str] = []
+                for last_indexed, name in self._get_subindices(self._index):
+                    # quit as soon as next oldest index can't contain anything
+                    if start_pub_date_str > last_indexed:
+                        break
+                    ret.append(name)
+                logger.info("subindex_list %s %r", start_pub_date_str, ret) # LOWER TO DEBUG!
+                return ret
+            except (elasticsearch.exceptions.TransportError, elasticsearch.exceptions.APIError):
+                pass
+        return [self._index]    # return list with wildcard
 
     def _search(self, search: Search, op: str) -> Response:
         """
