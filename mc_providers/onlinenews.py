@@ -367,7 +367,7 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
     BASE_URL = ""               # SearchApiClient has default
-    STATS_NAME = "wbm"
+    STAT_NAME = "wbm"
 
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)  # will call get_client
@@ -447,7 +447,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     """
     BASE_URL = "http://ramos.angwin:8000/v1/"
     INDEX_PREFIX = "mc_search"
-    STATS_NAME = "nsa"
+    STAT_NAME = "nsa"
 
     def __init__(self, **kwargs: Any):
         # maybe take comma separated list?
@@ -841,7 +841,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
     BASE_URL = "http://ramos.angwin:9200,http://woodward.angwin:9200,http://bradley.angwin:9200"
     WORDS_SAMPLE = 5000
-    STATS_NAME = "es"
+    STAT_NAME = "es"
 
     # elasticsearch ApiError meta.status codes to translate to TemporaryProviderException
     APIERROR_STATUS_TEMPORARY = [408, 429, 502, 503, 504]
@@ -1030,10 +1030,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
         return [self._index]
 
-    def _search(self, search: Search) -> Response:
+    def _search(self, search: Search, op: str) -> Response:
         """
         one place to send queries to ES, for logging
         """
+        self._incr_query_op(op)
         t0 = time.monotonic()
         execute_args = {}
         if self._caching < 0:
@@ -1084,11 +1085,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         return res
 
-    def _search_hits(self, search: Search) -> list[Hit]:
+    def _search_hits(self, search: Search, op: str) -> list[Hit]:
         """
         perform search, return list of Hit
         """
-        res = self._search(search)
+        res = self._search(search, op)
         return res.hits
 
     def _process_profile_data(self, pdata: AttrDict) -> None:
@@ -1241,8 +1242,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         search.aggs.bucket(AGG_LANG, "terms", field="language.keyword", size=100)
         search.aggs.bucket(AGG_DOMAIN, "terms", field="canonical_domain", size=100)
         search = search.extra(track_total_hits=True)
-        self._incr_query_op("overview")
-        res = self._search(search) # run search, need .aggregations & .hits
+        res = self._search(search, "overview") # run search, need .aggregations & .hits
 
         hits = res.hits            # property
         aggs = res.aggregations
@@ -1263,8 +1263,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         s = Search(index=self._index, using=self._es)\
             .query(Match(_id=item_id))\
             .source(includes=self._fields(expanded)) 
-        self._incr_query_op("item")
-        hits = self._search_hits(s)
+        hits = self._search_hits(s, "item")
         if not hits:
             return {}
 
@@ -1320,8 +1319,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # results.
             search = search.extra(search_after=after)
 
-        self._incr_query_op("paged-items")
-        hits = self._search_hits(search)
+        hits = self._search_hits(search, "paged-items")
         if not hits:
             return ([], None)
 
@@ -1413,8 +1411,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                      .source(es_fields)\
                      .extra(size=page_size)
 
-        self._incr_query_op("random-sample")
-        hits = self._search_hits(search)
+        hits = self._search_hits(search, "random-sample")
         yield [self._hit_to_row(hit, fields) for hit in hits] # just one page
 
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
