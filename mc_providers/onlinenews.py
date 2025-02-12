@@ -285,7 +285,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         cls._prune_kwargs(kwcopy)
         if kwcopy:
             exstring = ", ".join(kwcopy) # join key names
-            # If here with "_seconds", client's cache_function needs updating!
+            # If here with "_cache_seconds", client's cache_function needs updating!
             raise TypeError(f"unknown keyword args: {exstring}")
 
     @classmethod
@@ -828,6 +828,9 @@ def _b64_decode_page_token(strng: str) -> str:
 # string to lower likelihood of appearing (default keys are numeric).
 _SORT_KEY_SEP = "\x01"
 
+# if USE_SUBINDEX_LIST enabled
+_SUBINDEX_LIST_CACHE_MINUTES = 5
+
 class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     """
     version of MC Provider going direct to ES.
@@ -1051,7 +1054,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         assert isinstance(t, str)
         return t[:10]           # YYYY-MM-DD
 
-    @CachingManager.cache(seconds=15*60)
+    @CachingManager.cache(seconds=_SUBINDEX_LIST_CACHE_MINUTES*60)
     def _get_subindices(self, index: str) -> list[list[str]]:
         """
         index is a wildcard, passed as argument (instead of

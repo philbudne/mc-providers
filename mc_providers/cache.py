@@ -15,7 +15,7 @@ class CachingManager():
     `CachingManager.cache_function = your_cache_function`
     your_cache_function should have a signature like (function_to_cache, cache_prefix, args, kwargs) -> tuple[Any, bool]
     (second item in tuple indicatin if it was cached or not already)
-    kwargs WILL contain _seconds argument which should be pop'ed before calling `function_to_cache`
+    kwargs WILL contain _cache_seconds argument MUST should be pop'ed before calling `function_to_cache`
     """
     cache_function = None
 
@@ -45,7 +45,7 @@ class CachingManager():
                         for kw in kwargs_to_ignore:
                             if kw in kwargs:
                                 kwargs.pop(kw)
-                    results, was_cached = cls.cache_function(fn, cache_prefix, *args, **kwargs, _seconds=seconds)
+                    results, was_cached = cls.cache_function(fn, cache_prefix, *args, **kwargs, _cache_seconds=seconds)
                     return results
                 else:
                     return fn(*args, **kwargs)
