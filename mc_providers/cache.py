@@ -45,7 +45,9 @@ class CachingManager():
                         for kw in kwargs_to_ignore:
                             if kw in kwargs:
                                 kwargs.pop(kw)
-                    results, was_cached = cls.cache_function(fn, cache_prefix, *args, **kwargs, _cache_seconds=seconds)
+                    if seconds is not None:
+                        kwargs["_cache_seconds"] = seconds
+                    results, was_cached = cls.cache_function(fn, cache_prefix, *args, **kwargs)
                     return results
                 else:
                     return fn(*args, **kwargs)
