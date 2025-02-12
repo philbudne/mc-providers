@@ -1074,7 +1074,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         # sort in descending order by date of last indexed story
         # should be same as descending sort on name!!!
         subindices.sort(reverse=True)
-        print(subindices)
+        self.trace(Trace.SUBINDICES, "subindices %s", subindices)
         return subindices
 
     def _index_from_dates(self, start_date: dt.datetime, end_date: dt.datetime) -> list[str]:
@@ -1103,9 +1103,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                     if start_pub_date_str > last_indexed:
                         break
                     ret.append(name)
-                logger.info("subindex_list %s %r", start_pub_date_str, ret) # LOWER TO DEBUG!
+                self.trace(Trace.SUBINDICES, "subindex_list %s %r", start_pub_date_str, ret)
                 return ret
-            except (elasticsearch.exceptions.TransportError, elasticsearch.exceptions.APIError):
+            except (elasticsearch.exceptions.TransportError, elasticsearch.exceptions.ApiError):
                 pass
         return [self._index]    # return list with wildcard
 
