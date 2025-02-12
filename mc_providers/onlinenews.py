@@ -858,7 +858,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     # elasticsearch ApiError meta.status codes to translate to TemporaryProviderException
     APIERROR_STATUS_TEMPORARY = [408, 429, 502, 503, 504]
 
-    USE_SUBINDEX_LIST = False   # default to searching all ILM sub-indices
+    USE_SUBINDEX_LIST = 0   # default to searching all ILM sub-indices
 
     def __init__(self, **kwargs: Any):
         """
@@ -883,6 +883,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         self._last_elastic_ms = -1.0
 
         self._partial_responses = kwargs.pop("partial_responses", False) # TEMPORARY?
+
+        self._use_subindex_list = self._env_int(kwargs.pop("use_subindex_list", 0),
+                                                           "USE_SUBINDEX_LIST")
 
         # after pop-ing any local-only args:
         super().__init__(**kwargs)
@@ -1093,7 +1096,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         Searches are expected to NEVER include the current UTC date.
         """
-        if self.USE_SUBINDEX_LIST:
+        if self._use_subindex_list:
             # expand by a month for: articles accepted in advance,
             # date truncation in subindices list, subindex overlap
             start_pub_datetime = start_date - dt.timedelta(days=31)
