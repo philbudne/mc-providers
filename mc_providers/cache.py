@@ -15,7 +15,6 @@ class CachingManager():
     `CachingManager.cache_function = your_cache_function`
     your_cache_function should have a signature like (function_to_cache, cache_prefix, args, kwargs) -> tuple[Any, bool]
     (second item in tuple indicatin if it was cached or not already)
-    kwargs WILL contain _cache_seconds argument MUST should be pop'ed before calling `function_to_cache`
     """
     cache_function = None
 
@@ -28,6 +27,8 @@ class CachingManager():
         @param custom_prefix_for_key: if specified, will be used in place of function name for cache_key generation
         @param kwargs_to_ignore: if specified, list of kwargs not to include in generated key
         @param seconds: if specified, number of seconds to cache data
+            (if present/set CachingManager.cache_function MUST accept
+            _cache_seconds in kwargs, and MUST pop it!)
         """
         def decorator(fn: Callable[Param, RetType]) -> Callable[Param, RetType]:
             # WISH: detect if 'fn' is being declared as a method to a ContentProvider!!
