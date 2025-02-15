@@ -9,7 +9,6 @@ from typing import Any, Generator, Iterable, NoReturn, TypeAlias, TypedDict
 from operator import itemgetter
 
 # PyPI:
-import statsd
 from sigfig import sigfig
 
 from .exceptions import MissingRequiredValue, QueryingEverythingUnsupportedQuery
@@ -75,8 +74,9 @@ class _Term(TypedDict):
     """
     term: str
     count: int                  # total number of appearances
-    ratio: float                # rounded!
+    ratio: float                # now rounded!
     doc_count: int              # number of documents appeared in
+    doc_ratio: float            # rounded
     sample_size: int            # number of documents sampled
 
 Terms: TypeAlias = list[_Term]
@@ -110,6 +110,7 @@ def make_term(term: str, count: int, doc_count: int, sample_size: int) -> _Term:
     return _Term(term=term, count=count,
                  ratio=ratio_with_sigfigs(count, sample_size),
                  doc_count=doc_count,
+                 doc_ratio=ratio_with_sigfigs(doc_count, sample_size),
                  sample_size=sample_size)
 
 def terms_from_counts(term_counts: collections.Counter[str],
@@ -181,6 +182,7 @@ class ContentProvider(ABC):
         statsd_host = os.environ.get("STATSD_HOST")
         statsd_prefix = os.environ.get("STATSD_PREFIX")
         if statsd_host and statsd_prefix:
+            import statsd       # avoid warnings about unclosed socket
             self._statsd_client = statsd.StatsdClient(
                 statsd_host, None,
                 f"{statsd_prefix}.provider.{self.STAT_NAME}")
