@@ -32,6 +32,8 @@ dependencies = [
     "mediacloud == 4.*",
     "elasticsearch == 8.17.*", # keep in sync w/ ES major version?
     "elasticsearch-dsl == 8.17.*", # keep in sync w/ ES major version!
+    "sigfig == 1.1.*",
+    "spacy == 3.8.*",
     "statsd_client == 1.0.*",
 ]
 

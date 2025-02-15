@@ -13,7 +13,7 @@ import numpy as np              # for chunking
 from waybacknews.searchapi import SearchApiClient
 
 from .language import stopwords_for_language
-from .provider import AllItems, ContentProvider, CountOverTime, Date, Item, Items, Language, Source, Term, Trace
+from .provider import AllItems, ContentProvider, CountOverTime, Date, Item, Items, Language, Source, Terms, Trace, make_term, terms_from_counts
 from .cache import CachingManager
 from .mediacloud import MCSearchApiClient
 
@@ -125,7 +125,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     # Chunk'd
     @CachingManager.cache()
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-              **kwargs: Any) -> List[Term]:
+              **kwargs: Any) -> Terms:
         chunked_queries = self._assemble_and_chunk_query_str(query, **kwargs)
 
         # first figure out the dominant languages, so we can remove appropriate stopwords.
@@ -156,7 +156,8 @@ class OnlineNewsAbstractProvider(ContentProvider):
         results = dict(results_counter)
             
         # and clean up results to return
-        top_terms = [Term(term=t.lower(), count=c, ratio=c/sample_size) for t, c in results.items()
+        top_terms = [make_term(term=t.lower(), count=c, sample_size=sample_size)
+                     for t, c in results.items()
                      if t.lower() not in stopwords]
         top_terms = sorted(top_terms, key=lambda x:x["count"], reverse=True)
         return top_terms
@@ -173,8 +174,12 @@ class OnlineNewsAbstractProvider(ContentProvider):
             this_languages = self._client.top_languages(subquery, start_date, end_date, **kwargs)
             countable = {item["name"]: item["value"] for item in this_languages}
             results_counter += Counter(countable)
-        
-        top_languages = [Language(language=name, value=value, ratio=value/matching_count) for name, value in results_counter.items()]
+
+        # if client returns aggregated count of languages across all documents,
+        # no rounding should be applied (exact counts)
+        top_languages = [Language(language=name, value=value,
+                                  ratio=value/matching_count, sample_size=matching_count)
+                         for name, value in results_counter.items()]
         
         # Sort by count
         top_languages = sorted(top_languages, key=lambda x: x['value'], reverse=True)
@@ -608,7 +613,10 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         if self._is_no_results(results):
             return []
         matches = self._count_from_overview(results)
-        top_languages = [Language(language=name, value=value, ratio=value/matches)
+        # NOTE! value and matches are exact (population counts, not based on sampling)
+        # so they are "exact", and no rounding applied to ratio!
+        top_languages = [Language(language=name, value=value, ratio=value/matches,
+                                  sample_size=matches)
                          for name, value in results['toplangs'].items()]
         logger.debug("MC.languages: _overview returned %d items", len(top_languages))
 
@@ -1362,13 +1370,16 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         format a Hit returned by ES into an external "row".
         fields is a list of external/row field names to be returned
         (from _format_match (above) AND _matches to rows)
+        Omits fields not present in Hit
         """
         # need to iterate over _external_ names rather than just returned
         # fields to be able to return metadata fields
-        res = {
-            field: _FIELDS[field].get(hit)
-            for field in fields
-        }
+        res = {}
+        for field in fields:
+            try:
+                res[field] = _FIELDS[field].get(hit)
+            except AttributeError:
+                pass
         return res
 
     # max controlled by index-level index.max_result_window, default is 10K.
@@ -1415,7 +1426,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         yield [self._hit_to_row(hit, fields) for hit in hits] # just one page
 
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                             **kwargs: Any) -> list[Term]:
+                             **kwargs: Any) -> Terms:
         """
         uses generic Provider._sampled_title_words and Provider._sample_titles!
         """
