@@ -68,14 +68,16 @@ class Source(TypedDict):
     source: str
     count: int
 
-class _Term(TypedDict):         # use Terms, terms_from_counts
+class _Term(TypedDict):
     """
-    list element in return value for words method
+    list element in return value for words method.
+    use make_term, terms_from_counts to create
     """
     term: str
-    count: int
+    count: int                  # total number of appearances
     ratio: float                # rounded!
-    sample_size: int
+    doc_count: int              # number of documents appeared in
+    sample_size: int            # number of documents sampled
 
 Terms: TypeAlias = list[_Term]
 
@@ -101,21 +103,24 @@ def ratio_with_sigfigs(count: int, sample_size: int) -> float:
     # but is not a PyPI package.
     return sigfig.round(count / sample_size, sigfigs=sf, warn=False)
 
-def make_term(term: str, count: int, sample_size: int) -> _Term:
+def make_term(term: str, count: int, doc_count: int, sample_size: int) -> _Term:
     """
     the one place to format a dict for return from "words" method
     """
-    sigfigs = len(str(sample_size))
     return _Term(term=term, count=count,
                  ratio=ratio_with_sigfigs(count, sample_size),
+                 doc_count=doc_count,
                  sample_size=sample_size)
 
-def terms_from_counts(counts: collections.Counter[str], sample_size: int, limit) -> Terms:
+def terms_from_counts(term_counts: collections.Counter[str],
+                      doc_counts: collections.Counter[str],
+                      sample_size: int,
+                      limit: int) -> Terms:
     """
     format a Counter for return from library
     """
-    return [make_term(term, count, sample_size)
-            for term, count in counts.most_common(limit)]
+    return [make_term(term, count, doc_counts[term], sample_size)
+            for term, count in term_counts.most_common(limit)]
 
 class ContentProvider(ABC):
     """
@@ -336,8 +341,8 @@ class ContentProvider(ABC):
                 term_counts.update(this_doc_counts)
                 doc_counts.update(this_doc_counts.keys())
 
-        # clean up results (used to use sampled_count)
-        results = terms_from_counts(term_counts, title_count, limit)
+        # format results (used to use sampled_count)
+        results = terms_from_counts(term_counts, doc_counts, title_count, limit)
         self.trace(Trace.RESULTS, "_sampled_title_words %r", results)
         return results
 
