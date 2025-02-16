@@ -163,11 +163,11 @@ class ContentProvider(ABC):
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
         raise NotImplementedError("Doesn't support counts over time.")
 
-    def item(self, item_id: str) -> dict:
+    def item(self, item_id: str) -> Item:
         raise NotImplementedError("Doesn't support fetching individual content.")
 
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-              **kwargs: Any) -> list[Term]:
+              **kwargs: Any) -> List[Term]:
         raise NotImplementedError("Doesn't support top words.")
 
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> list[Language]:

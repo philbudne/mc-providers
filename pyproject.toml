@@ -35,8 +35,15 @@ dependencies = [
     "statsd_client == 1.0.*",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "types-dateparser ~=1.2.0.20250208",
+  "types-requests ~=2.32.0.20241016",
+]
+
 [tool.flit.sdist]
 include = ["mc_providers/*.py","mc_providers/language/*.py", "mc_providers/language/*.bin", "mc_providers/language/*.txt" ]
 
 [tool.flit.module]
 name = "mc_providers"
+
