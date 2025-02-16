@@ -64,7 +64,7 @@ def stopwords_for_language(lang_code: str) -> set:
 _IGNORE_BY_LANG = {
     "en": set(["'s"]),
 }
-_DEFAULT_IGNORE = set()
+_DEFAULT_IGNORE: set[str] = set()
 
 _MIN_WORD_LENGTH = 2            # zero to disable
 
