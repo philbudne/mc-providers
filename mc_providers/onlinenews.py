@@ -492,7 +492,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         """
         used to test _overview_query results
         """
-        return self._client._is_no_results(results)
+        return self._client._is_no_results(results) # type: ignore[no-any-return]
 
     @classmethod
     def _selector_query_clauses(cls, kwargs: dict) -> list[str]:
@@ -644,7 +644,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         q = self._assembled_query_str(query, **kwargs)
         self._prune_kwargs(kwargs)
         self._incr_query_op("overview")
-        return self._client._overview_query(q, start_date, end_date, **kwargs)
+        return self._client._overview_query(q, start_date, end_date, **kwargs) # type: ignore[no-any-return]
 
     @classmethod
     def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs: Any) -> list[str]:
