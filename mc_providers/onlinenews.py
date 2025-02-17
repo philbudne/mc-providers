@@ -1397,10 +1397,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         search = self._basic_search(query, start_date, end_date, **kwargs)\
                      .query(
                          FunctionScore(
-                             # elasticsearch_dsl v8.17 gives mypy error, phil reported as
-                             # https://github.com/elastic/elasticsearch-dsl-py/issues/1369
-                             # PLEASE REMOVE THIS COMMENT WHEN THE IGNORE BELOW BECOMES UNNECESSARY!
-                             functions=[ # type: ignore[arg-type]
+                             functions=[
                                  RandomScore(
                                      # needed for 100% reproducibility (ie; if paging results)
                                      # seed=int, field="fieldname"

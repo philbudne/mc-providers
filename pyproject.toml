@@ -36,7 +36,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# for pre-commit hook (and "make lint")
+# additional packages for mypy belong in pre-commit secion below
 dev = [
+    "pre-commit",
+    "python-dotenv",
+    "pytest"
+]
+
+# dependencies for mypy (not in user venv):
+# .pre-commit-config.yaml uses .pre-commit-run.sh
+# to (re)install these in the pre-commit PRIVATE venv
+# if this file has changed.
+pre-commit = [
   "types-dateparser ~=1.2.0.20250208",
   "types-requests ~=2.32.0.20241016",
 ]
@@ -57,3 +69,6 @@ check_untyped_defs = true
 warn_return_any = true
 warn_unused_ignores = true
 show_error_codes = true
+
+# look for local stubs to PyPI packages in top level stubs directory
+mypy_path = "stubs"

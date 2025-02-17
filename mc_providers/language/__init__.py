@@ -15,10 +15,10 @@ this_dir = os.path.dirname(os.path.realpath(__file__))
 _stopwords_by_language = {}
 
 
-fasttext_model = None
+fasttext_model: fasttext._FastText | None = None
 
 
-def _get_model():
+def _get_model() -> fasttext._FastText:
     try:
         global fasttext_model
         if fasttext_model is None:
@@ -29,7 +29,7 @@ def _get_model():
             os.path.join(this_dir, MODEL_NAME)))
 
 
-def detect(text: str) -> List:
+def detect(text: str) -> list[list[list[str]]]:
     cleaned_text = text.replace('\n', '')
     return _get_model().predict([cleaned_text])  # [['__label__en']], [array([0.9331119], dtype=float32)]
 
