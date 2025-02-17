@@ -2,7 +2,7 @@ from typing import Callable, Iterable, Optional
 
 from .provider import ContentProvider
 
-from typing import ParamSpec, Concatenate, TypeVar
+from typing import ParamSpec, TypeVar
 
 Param = ParamSpec("Param")
 RetType = TypeVar("RetType")
