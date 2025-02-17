@@ -15,10 +15,10 @@ this_dir = os.path.dirname(os.path.realpath(__file__))
 _stopwords_by_language = {}
 
 
-fasttext_model: fasttext._FastText | None = None
+fasttext_model: fasttext.FastText._FastText | None = None
 
 
-def _get_model() -> fasttext._FastText:
+def _get_model() -> fasttext.FastText._FastText:
     try:
         global fasttext_model
         if fasttext_model is None:
