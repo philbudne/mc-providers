@@ -46,7 +46,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         super().__init__(**kwargs)
         self._client = self.get_client()
 
-    def get_client(self):
+    def get_client(self) -> Any:
         raise NotImplementedError("Abstract provider class should not be implemented directly")
 
     @classmethod
@@ -372,7 +372,7 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)  # will call get_client
 
-    def get_client(self):
+    def get_client(self) -> Any:
         client = SearchApiClient("mediacloud", self._base_url)
         if self._timeout:
             client.TIMEOUT_SECS = self._timeout
@@ -455,7 +455,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         self._index = self._env_str(kwargs.pop("index_prefix", None), "INDEX_PREFIX") + "-*"
         super().__init__(**kwargs)
 
-    def get_client(self):
+    def get_client(self) -> Any:
         api_client = MCSearchApiClient(collection=self._index, api_base_url=self._base_url)
         if self._timeout:
             api_client.TIMEOUT_SECS = self._timeout
@@ -492,7 +492,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         """
         used to test _overview_query results
         """
-        return self._client._is_no_results(results)
+        return self._client._is_no_results(results) # type: ignore[no-any-return]
 
     @classmethod
     def _selector_query_clauses(cls, kwargs: dict) -> list[str]:
@@ -644,7 +644,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         q = self._assembled_query_str(query, **kwargs)
         self._prune_kwargs(kwargs)
         self._incr_query_op("overview")
-        return self._client._overview_query(q, start_date, end_date, **kwargs)
+        return self._client._overview_query(q, start_date, end_date, **kwargs) # type: ignore[no-any-return]
 
     @classmethod
     def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs: Any) -> list[str]:
@@ -896,7 +896,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                                                randomize_nodes_in_pool=True)
 
 
-    def get_client(self):
+    def get_client(self) -> Any:
         """
         called from OnlineNewsAbstractProvider constructor to set _client
         """
@@ -1222,12 +1222,12 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         return ProviderParseException(first, rest)
 
     @CachingManager.cache('overview')
-    def _overview_query(self, q: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Overview:
+    def _overview_query(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Overview:
         """
         from news-search-api/api.py
         """
 
-        logger.debug("MCES._overview %s %s %s", q, start_date, end_date)
+        logger.debug("MCES._overview %s %s %s", query, start_date, end_date)
         self.trace(Trace.QSTR, "MCES._overview kwargs %r", kwargs)
 
         # these are arbitrary, but match news-search-api/client.py
@@ -1236,7 +1236,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         AGG_LANG = "toplangs"
         AGG_DOMAIN = "topdomains"
 
-        search = self._basic_search(q, start_date, end_date, **kwargs)
+        search = self._basic_search(query, start_date, end_date, **kwargs)
         search.aggs.bucket(AGG_DAILY, "date_histogram", field="publication_date",
                            calendar_interval="day", min_doc_count=1)
         search.aggs.bucket(AGG_LANG, "terms", field="language.keyword", size=100)
@@ -1247,7 +1247,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         hits = res.hits            # property
         aggs = res.aggregations
         return Overview(
-            query=q,
+            query=query,
             # res.hits.total.value documented at
             # https://elasticsearch-dsl.readthedocs.io/en/stable/search_dsl.html#response
             total=hits.total.value, # type: ignore[attr-defined]
@@ -1397,10 +1397,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         search = self._basic_search(query, start_date, end_date, **kwargs)\
                      .query(
                          FunctionScore(
-                             # elasticsearch_dsl v8.17 gives mypy error, phil reported as
-                             # https://github.com/elastic/elasticsearch-dsl-py/issues/1369
-                             # PLEASE REMOVE THIS COMMENT WHEN THE IGNORE BELOW BECOMES UNNECESSARY!
-                             functions=[ # type: ignore[arg-type]
+                             functions=[
                                  RandomScore(
                                      # needed for 100% reproducibility (ie; if paging results)
                                      # seed=int, field="fieldname"

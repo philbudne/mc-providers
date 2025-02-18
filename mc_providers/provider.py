@@ -37,6 +37,13 @@ Item: TypeAlias = dict[str, Any]           # differs between providers?
 Items: TypeAlias = list[Item]              # page of items
 AllItems: TypeAlias = Iterable[Items]      # iterable of pages
 
+class _DateCount(TypedDict):
+    """
+    for _sum_count_by_date result
+    """
+    date: dt.date
+    count: int
+
 class Date(TypedDict):
     """
     element of counts list in count_over_time return
@@ -47,9 +54,28 @@ class Date(TypedDict):
 
 class CountOverTime(TypedDict):
     """
-    return type for count_over_time
+    return type for count_over_time method
     """
     counts: list[Date]
+
+class _CombinedDateInfo(TypedDict, total=False):
+    """
+    element of counts list in normalized_count_over_time return
+    returned by _combined_split_and_normalized_counts
+    NOTE! total=False to allow incremental creation in existing code
+    """
+    date: dt.date
+    total_count: int
+    count: int
+    ratio: float
+
+class NormalizedCountOverTime(TypedDict):
+    """
+    return type for normalized_count_over_time method
+    """
+    counts: list[_CombinedDateInfo]
+    total: int
+    normalized_total: int
 
 class Language(TypedDict):
     """
@@ -141,13 +167,11 @@ class ContentProvider(ABC):
         # set in web-search config
         statsd_host = os.environ.get("STATSD_HOST")
         statsd_prefix = os.environ.get("STATSD_PREFIX")
+        self._statsd_client: "statsd.StatsdClient" | None = None
         if statsd_host and statsd_prefix:
             self._statsd_client = statsd.StatsdClient(
                 statsd_host, None,
                 f"{statsd_prefix}.provider.{self.STAT_NAME}")
-        else:
-            self._statsd_client = None
-
 
     def everything_query(self) -> str:
         raise QueryingEverythingUnsupportedQuery()
@@ -163,7 +187,7 @@ class ContentProvider(ABC):
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
         raise NotImplementedError("Doesn't support counts over time.")
 
-    def item(self, item_id: str) -> dict:
+    def item(self, item_id: str) -> Item:
         raise NotImplementedError("Doesn't support fetching individual content.")
 
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
@@ -195,7 +219,7 @@ class ContentProvider(ABC):
         raise NotImplementedError("Doesn't support fetching random sample.")
 
     def normalized_count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
-                                   **kwargs: Any) -> dict:
+                                   **kwargs: Any) -> NormalizedCountOverTime:
         """
         Useful for rendering attention-over-time charts with extra information suitable for normalizing
         HACK: calling _sum_count_by_date for now to solve a problem specific to the Media Cloud provider
@@ -211,14 +235,14 @@ class ContentProvider(ABC):
         no_query_content_counts = self._sum_count_by_date(
             self.count_over_time(self._everything_query(), start_date, end_date,**kwargs)['counts'])
         no_query_total = sum([d['count'] for d in no_query_content_counts])
-        return {
-            'counts': _combined_split_and_normalized_counts(matching_content_counts, no_query_content_counts),
-            'total': matching_total,
-            'normalized_total': no_query_total,
-        }
+        return NormalizedCountOverTime(
+            counts=_combined_split_and_normalized_counts(matching_content_counts, no_query_content_counts),
+            total=matching_total,
+            normalized_total=no_query_total,
+        )
 
     @classmethod
-    def _sum_count_by_date(cls, counts: list[dict]) -> list[Date]:
+    def _sum_count_by_date(cls, counts: list[Date]) -> list[_DateCount]:
         """
         Given a list of counts, sum the counts by date
         :param counts:
@@ -403,7 +427,7 @@ class ContentProvider(ABC):
         if cls._trace >= level:
             logger.debug(format, *args)
 
-    def __incr(self, name) -> None:
+    def __incr(self, name: str) -> None:
         """
         statsd creates two files per counter.
         create a new helper (like _incr_query_op)
@@ -421,44 +445,16 @@ class ContentProvider(ABC):
         op = op.replace("_", "-")
         self.__incr(f"query.op_{op}") # using label_value
 
-    def _timing(self, name, ms: float) -> None:
+    def _timing(self, name: str, ms: float) -> None:
         # for timings statsd makes 54 files (38MB per metric per app)
         # so easy to waste lots of space....
         raise NotImplementedError("statsd timing not yet implemented")
 
-# not used??
-def add_missing_dates_to_split_story_counts(counts, start, end, period="day"):
-    if start is None and end is None:
-        return counts
-    new_counts = []
-    current = start.date()
-    while current <= end.date():
-        date_string = current.strftime("%Y-%m-%d %H:%M:%S")
-        existing_count = next((r for r in counts if r['date'] == date_string), None)
-        if existing_count:
-            new_counts.append(existing_count)
-        else:
-            new_counts.append({'date': date_string, 'count': 0})
-        if period == "day":
-            current += dt.timedelta(days=1)
-        elif period == "month":
-            current += dt.timedelta(days=31)
-        elif period == "year":
-            current += dt.timedelta(days=365)
-        else:
-            # PB: RuntimeError is for internal Python errors???
-            raise RuntimeError("Unsupport time period for filling in missing dates - {}".format(period))
-    return new_counts
-
-
 # used in normalized_count_over_time
-def _combined_split_and_normalized_counts(matching_results, total_results):
+def _combined_split_and_normalized_counts(matching_results: list[_DateCount], total_results: list[_DateCount]) -> list[_CombinedDateInfo]:
     counts = []
     for day in total_results:
-        day_info = {
-            'date': day['date'],
-            'total_count': day['count']
-        }
+        day_info = _CombinedDateInfo(date=day['date'], total_count=day['count'])
         matching = [d for d in matching_results if d['date'] == day['date']]
         if len(matching) == 0:
             day_info['count'] = 0
@@ -469,5 +465,5 @@ def _combined_split_and_normalized_counts(matching_results, total_results):
         else:
             day_info['ratio'] = float(day_info['count']) / float(day['count'])
         counts.append(day_info)
-    counts = sorted(counts, key=itemgetter('date'))
+    counts.sort(key=itemgetter('date'))
     return counts
