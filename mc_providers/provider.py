@@ -9,10 +9,10 @@ from typing import Any, Generator, Iterable, NoReturn, TypeAlias, TypedDict
 from operator import itemgetter
 
 # PyPI:
-import statsd
+from sigfig import sigfig
 
 from .exceptions import MissingRequiredValue, QueryingEverythingUnsupportedQuery
-from .language import terms_without_stopwords
+from .language import terms_without_stopwords_list
 
 logger = logging.getLogger(__name__) # for trace
 logger.setLevel(logging.DEBUG)
@@ -83,7 +83,8 @@ class Language(TypedDict):
     """
     language: str
     value: int
-    ratio: float                # really fraction?!
+    ratio: float                # rounded
+    sample_size: int
 
 class Source(TypedDict):
     """
@@ -92,13 +93,19 @@ class Source(TypedDict):
     source: str
     count: int
 
-class Term(TypedDict):
+class _Term(TypedDict):
     """
-    list element in return value for words method
+    list element in return value for words method.
+    use make_term, terms_from_counts to create
     """
     term: str
-    count: int
-    ratio: float                # really fraction?!
+    count: int                  # total number of appearances
+    ratio: float                # now rounded!
+    doc_count: int              # number of documents appeared in
+    doc_ratio: float            # rounded
+    sample_size: int            # number of documents sampled
+
+Terms: TypeAlias = list[_Term]
 
 class Trace:
     # less noisy things, with lower numbers
@@ -108,6 +115,39 @@ class Trace:
     QSTR = 50            # query string/args
     # even more noisy things, with higher numbers
     ALL = 1000
+
+def ratio_with_sigfigs(count: int, sample_size: int) -> float:
+    """
+    try to prevent fractions with 17 or 18 digits
+    (CSV and JSON formatting don't appear to do ANY rounding)
+    """
+    sf = min(len(str(count)), len(str(sample_size)))
+    # in theory the above is correct, but force three digits:
+    sf = max(sf, 3)
+    # disable warnings: carps about 500/1000 having one sigfig!
+    # https://github.com/Bobzoon/SigFigs/ implements division with sigfigs,
+    # but is not a PyPI package.
+    return sigfig.round(count / sample_size, sigfigs=sf, warn=False)
+
+def make_term(term: str, count: int, doc_count: int, sample_size: int) -> _Term:
+    """
+    the one place to format a dict for return from "words" method
+    """
+    return _Term(term=term, count=count,
+                 ratio=ratio_with_sigfigs(count, sample_size),
+                 doc_count=doc_count,
+                 doc_ratio=ratio_with_sigfigs(doc_count, sample_size),
+                 sample_size=sample_size)
+
+def terms_from_counts(term_counts: collections.Counter[str],
+                      doc_counts: collections.Counter[str],
+                      sample_size: int,
+                      limit: int) -> Terms:
+    """
+    format a Counter for return from library
+    """
+    return [make_term(term, count, doc_counts[term], sample_size)
+            for term, count in term_counts.most_common(limit)]
 
 class ContentProvider(ABC):
     """
@@ -169,6 +209,7 @@ class ContentProvider(ABC):
         statsd_prefix = os.environ.get("STATSD_PREFIX")
         self._statsd_client: "statsd.StatsdClient" | None = None
         if statsd_host and statsd_prefix:
+            import statsd       # avoid warnings about unclosed socket
             self._statsd_client = statsd.StatsdClient(
                 statsd_host, None,
                 f"{statsd_prefix}.provider.{self.STAT_NAME}")
@@ -191,7 +232,7 @@ class ContentProvider(ABC):
         raise NotImplementedError("Doesn't support fetching individual content.")
 
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-              **kwargs: Any) -> list[Term]:
+              **kwargs: Any) -> Terms:
         raise NotImplementedError("Doesn't support top words.")
 
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> list[Language]:
@@ -275,7 +316,11 @@ class ContentProvider(ABC):
             sampled_count += len(page)
             [counts.update(t.get('language', "UNK") for t in page)]
         # clean up results
-        results = [Language(language=w, value=c, ratio=c/sampled_count) for w, c in counts.most_common(limit)]
+        results = [Language(language=w,
+                            value=c,
+                            ratio=ratio_with_sigfigs(c, sampled_count), # sampled data
+                            sample_size=sampled_count)
+                   for w, c in counts.most_common(limit)]
         return results
 
     def _sample_titles(self, query: str, start_date: dt.datetime, end_date: dt.datetime, sample_size: int,
@@ -288,26 +333,42 @@ class ContentProvider(ABC):
 
     # use this if you need to sample some content for top words
     def _sampled_title_words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                             **kwargs: Any) -> list[Term]:
+                             **kwargs: Any) -> Terms:
         # support sample_size kwarg
         sample_size = kwargs.pop('sample_size', self.WORDS_SAMPLE)
-        # NOTE! english stopwords contain contractions!!!
-        remove_punctuation = bool(kwargs.pop("remove_punctuation", True)) # XXX TEMP?
 
-        # grab a sample and count terms as we page through it
+        # grab a sample and collect by like language as we page through it
+        # (spacy tokenizer has high startup cost)
+        titles: dict[str, list[str]] = collections.defaultdict(list)
         sampled_count = 0
-        counts: collections.Counter = collections.Counter()
+        title_count = 0
         for page in self._sample_titles(query, start_date, end_date, sample_size, **kwargs):
             sampled_count += len(page)
-            [counts.update(terms_without_stopwords(t.get('language', 'UNK'), t['title'], remove_punctuation)) for t in page  if 'title' in t]
+            for story in page:
+                if "title" in story:
+                    titles[story.get("language", 'UNK')].append(story["title"])
+                    title_count += 1
+
             needed = sample_size - sampled_count
             if needed <= 0:
                 break           # quit once sample_size filled
             if needed < sample_size:
                 sample_size = needed # don't overfill
 
-        # clean up results
-        results = [Term(term=w, count=c, ratio=c/sampled_count) for w, c in counts.most_common(limit)]
+        # now tokenize, removing stopwords and tally
+        term_counts: collections.Counter = collections.Counter() # total appearances of a term
+        doc_counts: collections.Counter = collections.Counter()  # number of documents with a term
+
+        # spacy init is expensive, so call with bunches of titles
+        # in groups by language, for stopword processing
+        for language, title_list in titles.items():
+            for word_list in terms_without_stopwords_list(language, title_list): # takes min_length
+                this_doc_counts = collections.Counter(word_list)
+                term_counts.update(this_doc_counts)
+                doc_counts.update(this_doc_counts.keys())
+
+        # format results (used to use sampled_count)
+        results = terms_from_counts(term_counts, doc_counts, title_count, limit)
         self.trace(Trace.RESULTS, "_sampled_title_words %r", results)
         return results
 
@@ -386,7 +447,7 @@ class ContentProvider(ABC):
 
         env_var = self._env_var(variable)
         try:
-            # 1. Look for OBJ_NAME_VARIABLE env var, returns value if it exits.
+            # 1. Look for OBJ_NAME_VARIABLE env var, returns value if it exists.
             val = int(os.environ[env_var])
             self.trace(Trace.ARGS, "%r env %s %d", self, env_var, val)
             return val
