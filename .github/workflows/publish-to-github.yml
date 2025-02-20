@@ -104,6 +104,14 @@ jobs:
             exit 0
           fi
 
+      - name: Force Update Git Tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git fetch --all --tags
+          git tag -f "${{ steps.extract.outputs.minor }}" "${GITHUB_SHA}"
+          git push --force origin "${{ steps.extract.outputs.minor }}"
+
       - name: Update or Create Minor Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
