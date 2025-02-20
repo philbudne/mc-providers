@@ -4,6 +4,7 @@ import importlib.metadata       # to get version for SOFTWARE_ID
 import logging
 import os
 import re
+import warnings
 from abc import ABC
 from typing import Any, Generator, Iterable, NoReturn, TypeAlias, TypedDict
 from operator import itemgetter
@@ -116,6 +117,12 @@ class Trace:
     # even more noisy things, with higher numbers
     ALL = 1000
 
+# disable warnings: carps about 500/1000 having one sigfig!
+# https://github.com/Bobzoon/SigFigs/ implements division with sigfigs,
+# but is not a PyPI package.
+warnings.filterwarnings('ignore', category=UserWarning,
+                        message=r".*\d+ significant figures requested from number with only \d+ .*")
+
 def ratio_with_sigfigs(count: int, sample_size: int) -> float:
     """
     try to prevent fractions with 17 or 18 digits
@@ -124,10 +131,7 @@ def ratio_with_sigfigs(count: int, sample_size: int) -> float:
     sf = min(len(str(count)), len(str(sample_size)))
     # in theory the above is correct, but force three digits:
     sf = max(sf, 3)
-    # disable warnings: carps about 500/1000 having one sigfig!
-    # https://github.com/Bobzoon/SigFigs/ implements division with sigfigs,
-    # but is not a PyPI package.
-    return sigfig.round(count / sample_size, sigfigs=sf, warn=False)
+    return sigfig.round(count / sample_size, sigfigs=sf)
 
 def make_term(term: str, count: int, doc_count: int, sample_size: int) -> _Term:
     """
