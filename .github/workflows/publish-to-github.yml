@@ -105,6 +105,7 @@ jobs:
           # Remove the "refs/tags/" prefix to get the tag name
           TAG=${GITHUB_REF#refs/tags/}
           echo "Current tag: $TAG"
+          echo "full_tag=$TAG >> $GITHUB_OUTPUT"
           # Expect tag format X.Y.Z (e.g. 3.2.1)
           if [[ "$TAG" =~ ^(v[0-9]+\.[0-9]+)\.[0-9]+$ ]]; then
             MINOR_VERSION="${BASH_REMATCH[1]}"
@@ -131,13 +132,14 @@ jobs:
         run: |
           MINOR_TAG="${{ steps.extract.outputs.minor }}"
           MINOR_VERSION="${{ steps.extract.outputs.minor_version }}"
+          FULL_TAG="${{ steps.extract.outputs.full_tag }}"
           echo "Minor release tag: $MINOR_TAG"
           # Check if a minor release already exists; if so, delete it so we can re-create it.
           if gh release view "$MINOR_TAG" > /dev/null 2>&1; then
             echo "Existing minor release found. Editing $MINOR_TAG..."
             gh release edit "$MINOR_TAG" \
               --target "${GITHUB_SHA}" \
-              --notes "This release tracks the latest patch for the ${MINOR_VERSION} series." \
+              --notes "This release tracks the latest patch for the ${MINOR_VERSION} series. Currently points at ${FULL_TAG}" \
               --latest
               
               echo "Edited minor release $MINOR_TAG to point to ${GITHUB_SHA}"
