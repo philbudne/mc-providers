@@ -76,8 +76,12 @@ jobs:
 
   update-minor:
     runs-on: ubuntu-latest
+    name: Update Minor Version Release
     needs: 
       - github-release
+    permissions:
+      contents: write  # IMPORTANT: mandatory for making GitHub Releases
+      id-token: write  # IMPORTANT: mandatory for sigstore
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -120,7 +124,7 @@ jobs:
   report-to-airflow:
     name: Report Successfull Release to Airflow 
     needs: 
-      - github-release
+      - update-minor
     runs-on: ubuntu-latest
     steps:
     - name: Install mc-manage package
