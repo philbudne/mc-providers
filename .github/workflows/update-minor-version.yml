@@ -2,7 +2,7 @@ name: Update Minor Version Release
 
 on: 
   release:
-    types: [released]
+    types: [created]
 
 jobs:
   update_minor:
