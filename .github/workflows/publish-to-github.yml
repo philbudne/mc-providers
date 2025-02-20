@@ -86,6 +86,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
+    - name: Download all the dists
+      uses: actions/download-artifact@v4
+      with:
+        name: python-package-distributions
+        path: dist/
+
+    - name: Sign the dists with Sigstore
+      uses: sigstore/gh-action-sigstore-python@v3.0.0
+      with:
+        inputs: >-
+          ./dist/*.tar.gz
+          ./dist/*.whl
+
       - name: Extract Minor Tag
         id: extract
         run: |
@@ -135,6 +148,18 @@ jobs:
               --target "${GITHUB_SHA}"
             echo "Created minor release $MINOR_TAG"
           fi
+
+      - name: Upload artifact signatures to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        # Upload to GitHub Release using the `gh` CLI.
+        # `dist/` contains the built packages, and the
+        # sigstore-produced signatures and certificates.
+        run: |
+          MINOR_TAG="${{ steps.extract.outputs.minor }}"
+          gh release upload "$MINOR_TAG" dist/**
+            --repo '${{ github.repository }}'
+          echo "Updated minor release dist"
 
   report-to-airflow:
     name: Report Successfull Release to Airflow 
