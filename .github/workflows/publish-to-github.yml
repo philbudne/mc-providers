@@ -73,8 +73,11 @@ jobs:
         '${{ github.ref_name }}' dist/**
         --repo '${{ github.repository }}'
 
- update_minor:
+
+  update-minor:
     runs-on: ubuntu-latest
+    needs: 
+      - github-release
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
