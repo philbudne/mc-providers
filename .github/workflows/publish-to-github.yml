@@ -167,7 +167,7 @@ jobs:
               if [[ "$asset_name" =~ \.(tar\.gz|whl|sigstore\.json)$ ]]; then
                 asset_id=$(echo "$asset" | jq -r '.id')
                 echo "Deleting asset '$asset_name' (ID: $asset_id)..."
-                gh release delete-asset "$asset_id" --confirm
+                gh release delete-asset "$asset_id" -y
               else
                 echo "Skipping asset '$asset_name' as it does not match target extensions."
               fi
