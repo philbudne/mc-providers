@@ -151,6 +151,29 @@ jobs:
             echo "Created minor release $MINOR_TAG"
           fi
 
+      - name: Delete Old Dist Attachments from Minor Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          MINOR_TAG="${{ steps.extract.outputs.minor }}"
+          echo "Checking for assets attached to release ${MINOR_TAG}..."
+          # Get the release assets in JSON format
+          ASSETS_JSON=$(gh release view "$MINOR_TAG" --json assets --jq '.assets')
+          if [ "$ASSETS_JSON" = "null" ] || [ "$ASSETS_JSON" = "[]" ]; then
+            echo "No assets found for release ${MINOR_TAG}."
+          else
+            echo "$ASSETS_JSON" | jq -c '.[]' | while read -r asset; do
+              asset_name=$(echo "$asset" | jq -r '.name')
+              if [[ "$asset_name" =~ \.(tar\.gz|whl|sigstore\.json)$ ]]; then
+                asset_id=$(echo "$asset" | jq -r '.id')
+                echo "Deleting asset '$asset_name' (ID: $asset_id)..."
+                gh release delete-asset "$asset_id" --confirm
+              else
+                echo "Skipping asset '$asset_name' as it does not match target extensions."
+              fi
+            done
+          fi
+
       - name: Upload artifact signatures to GitHub Release
         env:
           GITHUB_TOKEN: ${{ github.token }}

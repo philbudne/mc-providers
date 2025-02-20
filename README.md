@@ -18,6 +18,7 @@ Make sure `pip install flit twine` so you can build and deploy to PyPI.
 4. A github action will build and push the repository on committing a tagged version
 
 ### Version History
+* __v0.0.10__ - ...
 * __v0.0.9__ - Test again
 * __v0.0.0__ - TEST
 * __v3.1.2__ - Fix random sampling behavior in ES provider to be genuinely random, bugfix related to marginal sorting error, additional counters for fine-grained visibility 
