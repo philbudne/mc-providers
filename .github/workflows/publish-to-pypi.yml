@@ -76,7 +76,7 @@ jobs:
   report-to-airflow:
     name: Report Successfull Release to Airflow 
     needs: 
-      - publish-to-pypi
+      - github-release
     runs-on: ubuntu-latest
     steps:
     - name: Install mc-manage package
