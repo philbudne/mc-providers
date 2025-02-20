@@ -157,7 +157,7 @@ jobs:
         # sigstore-produced signatures and certificates.
         run: |
           MINOR_TAG="${{ steps.extract.outputs.minor }}"
-          gh release upload "$MINOR_TAG" dist/**
+          gh release upload "$MINOR_TAG" dist/** \
             --repo '${{ github.repository }}'
           echo "Updated minor release dist"
 
