@@ -116,9 +116,11 @@ jobs:
             echo "Existing minor release found. Editing $MINOR_TAG..."
             gh release edit "$MINOR_TAG" \
               --target "${GITHUB_SHA}" \
-              --notes "This release tracks the latest patch for the ${MINOR_VERSION} series."
+              --notes "This release tracks the latest patch for the ${MINOR_VERSION} series." \
+              --latest
+              
               echo "Edited minor release $MINOR_TAG to point to ${GITHUB_SHA}"
-          else:
+          else
             echo "No existing minor release. Creating $MINOR_TAG..."
             gh release create "$MINOR_TAG" \
               --notes "This release tracks the latest patch for the ${MINOR_VERSION} series." \
