@@ -123,6 +123,8 @@ jobs:
             gh release create "$MINOR_TAG" \
               --notes "This release tracks the latest patch for the ${MINOR_VERSION} series." \
               --target "${GITHUB_SHA}"
+            echo "Created minor release $MINOR_TAG"
+          fi
 
   report-to-airflow:
     name: Report Successfull Release to Airflow 
