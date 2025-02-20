@@ -113,13 +113,16 @@ jobs:
           echo "Minor release tag: $MINOR_TAG"
           # Check if a minor release already exists; if so, delete it so we can re-create it.
           if gh release view "$MINOR_TAG" > /dev/null 2>&1; then
-            echo "Existing minor release found. Deleting $MINOR_TAG..."
-            gh release delete "$MINOR_TAG" --yes
-          fi
-          echo "Creating minor release $MINOR_TAG..."
-          gh release create "$MINOR_TAG" \
-            --notes "This release tracks the latest patch for the ${MINOR_VERSION} series." \
-            --target "${GITHUB_SHA}"
+            echo "Existing minor release found. Editing $MINOR_TAG..."
+            gh release edit "$MINOR_TAG" \
+              --target "${GITHUB_SHA}" \
+              --notes "This release tracks the latest patch for the ${MINOR_VERSION} series."
+              echo "Edited minor release $MINOR_TAG to point to ${GITHUB_SHA}"
+          else:
+            echo "No existing minor release. Creating $MINOR_TAG..."
+            gh release create "$MINOR_TAG" \
+              --notes "This release tracks the latest patch for the ${MINOR_VERSION} series." \
+              --target "${GITHUB_SHA}"
 
   report-to-airflow:
     name: Report Successfull Release to Airflow 
