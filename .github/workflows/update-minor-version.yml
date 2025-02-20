@@ -1,6 +1,6 @@
 name: Update Minor Version Release
 
-on: 
+on:
   release:
     types: [published]
 
