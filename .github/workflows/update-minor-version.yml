@@ -1,7 +1,7 @@
 name: Update Minor Version Release
 
 on: 
-	release:
+  release:
     types: [published]
 
 jobs:
