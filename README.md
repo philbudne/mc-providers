@@ -7,10 +7,9 @@ Install with pip (`pip install .`) and the `install.sh` script.
 
 Requires environment variables set for various interfaces to work correctly.
 
+Releases > 4.0.0 will all be shared exclusively on github, and this project will be delisted from pypi before April 2025
 
 ### Build
-
-Make sure `pip install flit twine` so you can build and deploy to PyPI.
 
 1. Bump the version number in `pyproject.toml`
 2. Add a note about changes to the version history below
@@ -18,6 +17,7 @@ Make sure `pip install flit twine` so you can build and deploy to PyPI.
 4. A github action will build and push the repository on committing a tagged version
 
 ### Version History
+* __v3.1.3__ - Accept "Seconds" argument to cache decorator. Update deployment action to track Minor releases 
 * __v3.1.2__ - Fix random sampling behavior in ES provider to be genuinely random, bugfix related to marginal sorting error, additional counters for fine-grained visibility 
 * __v3.1.1__ - Fix ES Provider to send None as last page pagination token
 * __v3.1.0__ - Add new ProviderException classes to pass more meaningful errors to consumer processes
