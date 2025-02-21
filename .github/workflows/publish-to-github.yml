@@ -1,0 +1,208 @@
+name: Publish Python 🐍 distribution 📦 to Github
+on: 
+  push:
+    tags: 
+      - "*"
+
+jobs:
+  build:
+    name: Build distribution 📦
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.x"
+    - name: Install pypa/build
+      run: >-
+        python3 -m
+        pip install
+        build
+        --user
+    - name: Build a binary wheel and a source tarball
+      run: python3 -m build
+    - name: Store the distribution packages
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-package-distributions
+        path: dist/
+
+
+  github-release:
+    name: >-
+      Sign the Python 🐍 distribution 📦 with Sigstore
+      and upload them to GitHub Release
+    needs:
+    - build
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write  # IMPORTANT: mandatory for making GitHub Releases
+      id-token: write  # IMPORTANT: mandatory for sigstore
+
+    steps:
+    - name: Download all the dists
+      uses: actions/download-artifact@v4
+      with:
+        name: python-package-distributions
+        path: dist/
+    - name: Sign the dists with Sigstore
+      uses: sigstore/gh-action-sigstore-python@v3.0.0
+      with:
+        inputs: >-
+          ./dist/*.tar.gz
+          ./dist/*.whl
+    - name: Create GitHub Release
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: >-
+        gh release create
+        '${{ github.ref_name }}'
+        --repo '${{ github.repository }}'
+        --notes ""
+    - name: Upload artifact signatures to GitHub Release
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      # Upload to GitHub Release using the `gh` CLI.
+      # `dist/` contains the built packages, and the
+      # sigstore-produced signatures and certificates.
+      run: >-
+        gh release upload
+        '${{ github.ref_name }}' dist/**
+        --repo '${{ github.repository }}'
+
+
+  update-minor:
+    runs-on: ubuntu-latest
+    name: Update Minor Version Release
+    needs: 
+      - github-release
+    permissions:
+      contents: write  # IMPORTANT: mandatory for making GitHub Releases
+      id-token: write  # IMPORTANT: mandatory for sigstore
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Download all the dists
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Sign the dists with Sigstore
+        uses: sigstore/gh-action-sigstore-python@v3.0.0
+        with:
+          inputs: >-
+            ./dist/*.tar.gz
+            ./dist/*.whl
+
+      - name: Extract Minor Tag
+        id: extract
+        run: |
+          # Remove the "refs/tags/" prefix to get the tag name
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "Current tag: $TAG"
+          echo "full_tag=$TAG" >> $GITHUB_OUTPUT
+          # Expect tag format X.Y.Z (e.g. 3.2.1)
+          if [[ "$TAG" =~ ^(v[0-9]+\.[0-9]+)\.[0-9]+$ ]]; then
+            MINOR_VERSION="${BASH_REMATCH[1]}"
+            MINOR_TAG="${MINOR_VERSION}.latest"
+            echo "Extracted minor tag: $MINOR_TAG"
+            echo "minor=$MINOR_TAG" >> $GITHUB_OUTPUT
+            echo "minor_version=$MINOR_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "Tag $TAG does not match semver X.Y.Z pattern. Skipping minor release update."
+            exit 0
+          fi
+
+      - name: Force Update Git Tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git fetch --all --tags
+          git tag -f "${{ steps.extract.outputs.minor }}" "${GITHUB_SHA}"
+          git push --force origin "${{ steps.extract.outputs.minor }}"
+
+      - name: Update or Create Minor Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          MINOR_TAG="${{ steps.extract.outputs.minor }}"
+          MINOR_VERSION="${{ steps.extract.outputs.minor_version }}"
+          FULL_TAG="${{ steps.extract.outputs.full_tag }}"
+          echo "Minor release tag: $MINOR_TAG"
+          # Check if a minor release already exists; if so, delete it so we can re-create it.
+          if gh release view "$MINOR_TAG" > /dev/null 2>&1; then
+            echo "Existing minor release found. Editing $MINOR_TAG..."
+            gh release edit "$MINOR_TAG" \
+              --target "${GITHUB_SHA}" \
+              --notes "This release tracks the latest patch for the ${MINOR_VERSION} series. Currently at ${FULL_TAG}" \
+              --latest
+              
+              echo "Edited minor release $MINOR_TAG to point to ${GITHUB_SHA}"
+          else
+            echo "No existing minor release. Creating $MINOR_TAG..."
+            gh release create "$MINOR_TAG" \
+              --notes "This release tracks the latest patch for the ${MINOR_VERSION} series." \
+              --target "${GITHUB_SHA}"
+            echo "Created minor release $MINOR_TAG"
+          fi
+
+      - name: Delete Old Dist Attachments from Minor Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          MINOR_TAG="${{ steps.extract.outputs.minor }}"
+          echo "Checking for assets attached to release ${MINOR_TAG}..."
+          # Get the release assets in JSON format
+          ASSETS_JSON=$(gh release view "$MINOR_TAG" --json assets --jq '.assets')
+          if [ "$ASSETS_JSON" = "null" ] || [ "$ASSETS_JSON" = "[]" ]; then
+            echo "No assets found for release ${MINOR_TAG}."
+          else
+            echo "$ASSETS_JSON" | jq -c '.[]' | while read -r asset; do
+              asset_name=$(echo "$asset" | jq -r '.name')
+              if [[ "$asset_name" =~ \.(tar\.gz|whl|sigstore\.json)$ ]]; then
+                asset_id=$(echo "$asset" | jq -r '.id')
+                echo "Deleting asset '$asset_name' (ID: $asset_id)..."
+                gh release delete-asset "$MINOR_TAG" "$asset_name" -y
+              else
+                echo "Skipping asset '$asset_name' as it does not match target extensions."
+              fi
+            done
+          fi
+
+      - name: Upload artifact signatures to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        # Upload to GitHub Release using the `gh` CLI.
+        # `dist/` contains the built packages, and the
+        # sigstore-produced signatures and certificates.
+        run: |
+          MINOR_TAG="${{ steps.extract.outputs.minor }}"
+          gh release upload "$MINOR_TAG" dist/** \
+            --repo '${{ github.repository }}'
+          echo "Updated minor release dist"
+
+  report-to-airflow:
+    name: Report Successfull Release to Airflow 
+    needs: 
+      - update-minor
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install mc-manage package
+      run: |
+        pip install git+https://github.com/mediacloud/mc-manage@v1.1.5
+
+    - name: Get tag name
+      id: extract_tag
+      run: echo "TAG_NAME=${GITHUB_REF##*/}" >> $GITHUB_ENV
+
+    - name: Record successful release
+      run: |
+        python -m mc-manage.airtable-release-update --name mc-providers --version ${{ env.TAG_NAME }}
+      env:
+        AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
+        MEAG_BASE_ID: ${{ secrets.MEAG_BASE_ID }}
