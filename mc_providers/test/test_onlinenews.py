@@ -8,6 +8,8 @@ import mediacloud.api
 import os
 from typing import List
 
+import pytest
+
 from mc_providers.onlinenews import OnlineNewsWaybackMachineProvider
 from mc_providers import (provider_for, PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD,
                           PLATFORM_SOURCE_MEDIA_CLOUD_OLD, PLATFORM_SOURCE_WAYBACK_MACHINE)
@@ -117,6 +119,7 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
             found_story_count += len(page)
         assert found_story_count == story_count
 
+    @pytest.mark.filterwarnings("ignore:.*significant figures.*:UserWarning")
     def test_words(self):
         results = self._provider.words("coronavirus", dt.datetime(2023, 12, 1),
                                        dt.datetime(2023, 12, 5))

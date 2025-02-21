@@ -20,9 +20,15 @@ class CachingManager():
 
     # typing from https://stackoverflow.com/questions/47060133/python-3-type-hinting-for-decorator
     @classmethod
-    def cache(cls, custom_prefix_for_key: Optional[str] = None, kwargs_to_ignore: Iterable[str] = []) -> Callable[[Callable[Param, RetType]], Callable[Param, RetType]]:
+    def cache(cls, custom_prefix_for_key: Optional[str] = None,
+              kwargs_to_ignore: Iterable[str] = [],
+              seconds: Optional[int] = None) -> Callable[[Callable[Param, RetType]], Callable[Param, RetType]]:
         """
         @param custom_prefix_for_key: if specified, will be used in place of function name for cache_key generation
+        @param kwargs_to_ignore: if specified, list of kwargs not to include in generated key
+        @param seconds: if specified, number of seconds to cache data
+            (CachingManager.cache_function MUST accept _cache_seconds
+            in kwargs, and MUST pop it before calling the decorated function)
         """
         def decorator(fn: Callable[Param, RetType]) -> Callable[Param, RetType]:
             # WISH: detect if 'fn' is being declared as a method to a ContentProvider!!
@@ -40,6 +46,8 @@ class CachingManager():
                         for kw in kwargs_to_ignore:
                             if kw in kwargs:
                                 kwargs.pop(kw)
+                    if seconds is not None:
+                        kwargs["_cache_seconds"] = seconds
                     results, was_cached = cls.cache_function(fn, cache_prefix, *args, **kwargs)
                     return results
                 else:
