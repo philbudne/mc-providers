@@ -9,8 +9,6 @@ import mediacloud.api
 import os
 from typing import List
 
-import pytest
-
 from mc_providers.onlinenews import OnlineNewsWaybackMachineProvider
 from mc_providers import (provider_for, PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD,
                         PLATFORM_SOURCE_WAYBACK_MACHINE)
