@@ -1,21 +1,16 @@
 import datetime as dt
-import json
 import logging
 import random
 from collections import Counter
-from typing import Any, Dict, List, Mapping, NamedTuple, Optional, TypeAlias, TypedDict
+from typing import Any, List, Mapping, NamedTuple, Optional, TypeAlias, TypedDict
 
 # PyPI
 import ciso8601
-import dateparser     # used for publication_date in IA match_to_row
 import numpy as np              # for chunking
-from waybacknews.searchapi import SearchApiClient
 
 from .provider import (
     AllItems, ContentProvider, CountOverTime, Date,
-    Item, Items, Language, Source, Terms, Trace,
-    LANGUAGES_LIMIT, SAMPLE_LIMIT,
-    SOURCES_LIMIT, WORDS_LIMIT
+    Item, Language, Source, Trace, LANGUAGES_LIMIT, SOURCES_LIMIT
 )
 from .cache import CachingManager
 
@@ -213,148 +208,6 @@ class OnlineNewsAbstractProvider(ContentProvider):
         # important to keep this unique among platforms so that the caching works right
         return type(self).__name__
 
-
-class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
-    """
-    All these endpoints accept a `domains: List[str]` keyword arg.
-    """
-    BASE_URL = ""               # SearchApiClient has default
-    STAT_NAME = "wbm"
-
-    def __init__(self, **kwargs: Any):
-        super().__init__(**kwargs)
-        # NOTE! typing _client as Any to avoid type checking client calls
-        self._client = SearchApiClient("mediacloud", self._base_url)
-        if self._timeout:
-            self._client.TIMEOUT_SECS = self._timeout
-
-    @classmethod
-    def domain_search_string(cls) -> str:
-        return "domain"
-
-    # Chunk'd
-    # NB: it looks like the limit keyword here doesn't ever get passed into the query - something's missing here.
-    def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = SAMPLE_LIMIT,
-               **kwargs: Any) -> Items:
-        results = []
-        with self._count_time("sample"):
-            for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
-                this_results = self._client.sample(subquery, start_date, end_date, **kwargs)
-                results.extend(this_results)
-
-        if len(results) > limit:
-            results = random.sample(results, limit)
-
-        return self._matches_to_rows(results)
-
-    # Chunk'd
-    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> int:
-        count = 0
-        with self._count_time("count"):
-            for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
-                count += self._client.count(subquery, start_date, end_date, **kwargs)
-        return count
-
-    # Chunk'd
-    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
-        counter: Counter = Counter()
-        with self._count_time("count-over-time"):
-            for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
-                res = self._client.count_over_time(subquery, start_date, end_date, **kwargs)
-            countable = {i['date']: i['count'] for i in res}
-            counter += Counter(countable)
-
-        results = [Date(date=date, timestamp=date.timestamp(), count=count)
-                   for date, count in counter.items()]
-        # Sorting before returning for the sake of testability
-        results.sort(key=lambda x: x["timestamp"])
-        return CountOverTime(counts=results)
-
-    @CachingManager.cache()
-    def item(self, item_id: str) -> Item:
-        with self._count_time("item"):
-            one_item = self._client.article(item_id)
-        return self._match_to_row(one_item)
-
-    # Chunk'd
-    def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs: Any) -> AllItems:
-        with self._count_time("all-items"):
-            for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
-                for page in self._client.all_articles(subquery, start_date, end_date, **kwargs):
-                    yield self._matches_to_rows(page)
-
-    def paged_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs: Any)\
-            -> tuple[List[Dict], Optional[str]] :
-        """
-        Note - this is not chunk'd so you can't run giant queries page by page... use `all_items` instead.
-        This kwargs should include `pagination_token`, which will get relayed in to the api client and fetch
-        the right page of results.
-        """
-        updated_kwargs = {**kwargs, 'chunk': False}
-        with self._count_time("paged-items"):
-            query = self._assemble_and_chunk_query_str_kw(query, updated_kwargs)[0]
-            page, pagination_token = self._client.paged_articles(query, start_date, end_date, **kwargs)
-        return self._matches_to_rows(page), pagination_token
-
-    # Chunk'd
-    def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = LANGUAGES_LIMIT,
-                  **kwargs: Any) -> List[Language]:
-
-        with self._count_time("languages"):
-            matching_count = self.count(query, start_date, end_date, **kwargs)
-
-            results_counter: Counter = Counter({})
-            for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
-                this_languages = self._client.top_languages(subquery, start_date, end_date, **kwargs)
-                countable = {item["name"]: item["value"] for item in this_languages}
-                results_counter += Counter(countable)
-
-        # if client returns aggregated count of languages across all documents,
-        # no rounding should be applied (exact counts)
-        top_languages = [Language(language=name, value=value,
-                                  ratio=value/matching_count, sample_size=matching_count)
-                         for name, value in results_counter.items()]
-
-        # Sort by count
-        top_languages = sorted(top_languages, key=lambda x: x['value'], reverse=True)
-        return top_languages[:limit]
-
-    # Chunk'd
-    def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = SOURCES_LIMIT,
-                **kwargs: Any) -> List[Source]:
-
-        results_counter: Counter = Counter({})
-        with self._count_time("sources"):
-            for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
-                results = self._client.top_sources(subquery, start_date, end_date)
-                countable = {source['name']: source['value'] for source in results}
-                results_counter += Counter(countable)
-
-        cleaned_sources = [Source(source=source, count=count) for source, count in results_counter.items()]
-        cleaned_sources = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
-        return cleaned_sources
-
-    @classmethod
-    def _matches_to_rows(cls, matches: List) -> Items:
-        return [OnlineNewsWaybackMachineProvider._match_to_row(m) for m in matches]
-
-    @classmethod
-    def _match_to_row(cls, match: Dict) -> Dict:
-        return {
-            'media_name': match['domain'],
-            'media_url': "http://"+match['domain'],
-            'id': match['archive_playback_url'].split("/")[4],  # grabs a unique id off archive.org URL
-            'title': match['title'],
-            'publish_date': dateparser.parse(match['publication_date']),
-            'url': match['url'],
-            'language': match['language'],
-            'archived_url': match['archive_playback_url'],
-            'article_url': match['article_url'],
-        }
-
-    def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = WORDS_LIMIT,
-              **kwargs: Any) -> Terms:
-        raise PermanentProviderException("Top Words results are not supported for Wayback Machine queries at this time")
 
 ################
 # helpers for formatting url_search_strings (only enabled for MC)

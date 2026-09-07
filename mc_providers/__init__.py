@@ -5,7 +5,7 @@ from .exceptions import UnknownProviderException
 # NOTE! DEFAULT_TIMEOUT no longer imported here:
 # doesn't change when set_default_timeout called!!!
 from .provider import ContentProvider, set_default_timeout
-from .onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudProvider
+from .onlinenews import OnlineNewsMediaCloudProvider
 
 
 logger = logging.getLogger(__name__)
@@ -16,7 +16,6 @@ PLATFORM_ONLINE_NEWS = 'onlinenews'
 
 # static list matching topics/info results
 
-PLATFORM_SOURCE_WAYBACK_MACHINE = 'waybackmachine'
 PLATFORM_SOURCE_MEDIA_CLOUD = "mediacloud"     # direct to elasticsearch
 
 NAME_SEPARATOR = "-"
@@ -28,7 +27,6 @@ def provider_name(platform: str, source: str) -> str:
 # if each class had PLATFORM_NAME and SOURCE_NAME members,
 # this map could ve constructed from just a list of classes.
 _PROVIDER_MAP: dict[str, type[ContentProvider]] = {
-    provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_WAYBACK_MACHINE): OnlineNewsWaybackMachineProvider,
     provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD): OnlineNewsMediaCloudProvider,
 }
 

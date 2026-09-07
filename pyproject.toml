@@ -26,10 +26,9 @@ classifiers = [
 ]
 dependencies = [
     "python-dateutil == 2.*",
-    "ciso8601",  # dependency of wayback-news-search, so let it decide which versin is best
+    "ciso8601 == 2.3.*",  # dependency of wayback-news-search, so let it decide which versin is best
     "dateparser",
     "requests",
-    "wayback-news-search == 1.*",
     "fasttext == 0.9.*",
     "mediacloud-metadata >= 1.4.3",
     "elasticsearch == 8.19.*", # keep in sync w/ ES major version? (elasticsearch-dsl now part of this)
