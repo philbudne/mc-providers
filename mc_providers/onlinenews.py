@@ -1369,7 +1369,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             # NOTE! depends on client limiting to reasonable choices!!
             # (full text might leak data, or causes memory exhaustion!)
             # originally took internal sort_field names only, now accept
-            # both, prefering to intrepret as external first
+            # both, preferring to interpret as external first
             # (the default indexed_date name is same inside and out)
             sf = self._ES_FIELDS.get(sort_field)
             if sf and not sf.metadata:
