@@ -48,66 +48,6 @@ class OnlineNewsAbstractProvider(ContentProvider):
     def everything_query(self) -> str:
         return '*'
 
-    @classmethod
-    def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs: Any) -> list[str]:
-        """
-        If a query string is too long, we can attempt to run it anyway by splitting the domain substring (which is
-        guaranteed to be only a sequence of ANDs) into parts, to produce multiple smaller queries which are collectively
-        equivalent to the original.
-
-        Because we have this chunking thing implemented, and the filter behavior never interacts with the domain search
-        behavior, we can just put the two different search fields into two different sets of behavior at the top.
-        There's obvious room to optimize, but this gets the done job.
-        """
-        cls.trace(Trace.QSTR, "AP._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
-        domains = kwargs.get('domains', [])
-
-        filters = kwargs.get('filters', [])
-
-        if chunk and (len(base_query) > cls.MAX_QUERY_LENGTH):
-            # of course there still is the possibility that the base query is too large, which
-            # cannot be fixed by this method
-            raise RuntimeError(f"Base Query cannot exceed {cls.MAX_QUERY_LENGTH} characters")
-
-        # Get Domain Queries
-        domain_queries = []
-        if len(domains) > 0:
-            domain_queries = [cls._assembled_query_str(base_query, domains=domains)]
-            domain_queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in domain_queries])
-
-            domain_divisor = 2
-
-            if chunk and domain_queries_too_big:
-                while domain_queries_too_big:
-                    chunked_domains = np.array_split(domains, domain_divisor)
-                    domain_queries = [cls._assembled_query_str(base_query, domains=dom) for dom in chunked_domains]
-                    domain_queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in domain_queries])
-                    domain_divisor *= 2
-
-        # Then Get Filter Queries
-        filter_queries = []
-        if len(filters) > 0:
-            filter_queries = [cls._assembled_query_str(base_query, filters=filters)]
-            filter_queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in filter_queries])
-
-            filter_divisor = 2
-            if chunk and filter_queries_too_big:
-                while filter_queries_too_big:
-                    chunked_filters = np.array_split(filters, filter_divisor)
-                    filter_queries = [cls._assembled_query_str(base_query, filters=filt) for filt in chunked_filters]
-                    filter_queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in filter_queries])
-                    filter_divisor *= 2
-            
-        # There's a (probably not uncommon) edge case where we're searching against no collections at all,
-        # so just do it manually here.
-        if len(domain_queries) == 0 and len(filter_queries) == 0:
-            queries = [cls._assembled_query_str(base_query)]
-        
-        else:
-            queries = domain_queries + filter_queries
-        
-        return queries
-
     @staticmethod
     def _prune_kwargs(kwargs: dict[str, Any]) -> None:
         """
@@ -138,110 +78,12 @@ class OnlineNewsAbstractProvider(ContentProvider):
             raise TypeError(f"unknown keyword args: {exstring}")
 
     @classmethod
-    def _assemble_and_chunk_query_str_kw(cls, base_query: str, kwargs: dict = {}) -> list[str]:
-        """
-        takes kwargs as *dict*, removes items that shouldn't be sent to _client
-        """
-        chunk = kwargs.pop("chunk", True)
-        queries = cls._assemble_and_chunk_query_str(base_query, chunk=chunk, **kwargs)
-        cls._prune_kwargs(kwargs)
-        return queries
-
-    @classmethod
-    def _selector_query_clauses(cls, kwargs: dict) -> list[str]:
-        """
-        take domains and filters kwargs and
-        returns a list of query_strings to be OR'ed together
-        (to be AND'ed with user query *or* used as a filter)
-        """
-        cls.trace(Trace.QSTR, "AP._selector_query_clauses IN: %r", kwargs)
-        selector_clauses = []
-
-        domains = kwargs.get('domains', [])
-        if len(domains) > 0:
-            domain_strings = " OR ".join(domains)
-            selector_clauses.append(f"{cls.domain_search_string()}:({domain_strings})")
-            
-        # put all filters in single query string
-        # (NOTE: filters are additive, not subtractive!)
-        filters = kwargs.get('filters', [])
-        if len(filters) > 0:
-            for filter in filters:
-                if "AND" in filter:
-                    # parenthesize if any chance it has a grabby AND.
-                    # (Phil: did I get this in reverse? and would need to parenthesize
-                    # things containing OR if ANDing subtractive clauses together?)
-                    selector_clauses.append(f"({filter})")
-                else:
-                    selector_clauses.append(filter)
-        cls.trace(Trace.QSTR, "AP._selector_query_clauses OUT: %s", selector_clauses)
-        return selector_clauses
-
-    @classmethod
     def _selector_count(cls, kwargs: dict) -> int:
         return len(kwargs.get('domains', [])) + len(kwargs.get('filters', []))
-
-    @classmethod
-    def _selector_query_string_from_clauses(cls, clauses: list[str]) -> str:
-        return " OR ".join(clauses)
-
-    @classmethod
-    def _selector_query_string(cls, kwargs: dict) -> str:
-        """
-        takes kwargs (as dict) return a query_string to be AND'ed with
-        user query or used as a filter.
-        """
-        return cls._selector_query_string_from_clauses(cls._selector_query_clauses(kwargs))
-
-    @classmethod
-    def _assembled_query_str(cls, query: str, **kwargs: Any) -> str:
-        cls.trace(Trace.QSTR, "_assembled_query_str IN: %s %r", query, kwargs)
-        sqs = cls._selector_query_string(kwargs) # takes dict
-        if sqs:
-            q = f"({query}) AND ({sqs})"
-        else:
-            q = query
-        cls.trace(Trace.QSTR, "_assembled_query_str OUT: %s", q)
-        return q
 
     def __repr__(self) -> str:
         # important to keep this unique among platforms so that the caching works right
         return type(self).__name__
-
-
-################
-# helpers for formatting url_search_strings (only enabled for MC)
-# the helpers are only needed because of the TEMP url_search_string_domain
-
-def format_and_append_uss(uss: str, url_list: list[str]) -> None:
-    """
-    The ONE place that knows how to format a url_search_string!!!
-    (ie; what to put before and after one).
-
-    Appends to `url_list` argument!
-
-    NOTE! generates "unsanitized" (unsanitary?) strings!!
-
-    Currently (11/2024) A URL Search String should:
-    1. Start with fully qualified domain name WITHOUT http:// or https://
-    2. End with "*"
-    """
-    # currently url_search_strings MUST start with fully
-    # qualified domain name (FQDN) without scheme or
-    # leading slashes, and MUST end with a *!
-    if not uss.endswith("*"):
-        uss += "*"
-    url_list.append(f"http\\://{uss}")
-    url_list.append(f"https\\://{uss}")
-
-def match_formatted_search_strings(fuss: list[str]) -> str:
-    """
-    takes list of url search_string formatted by `format_and_append_uss`
-    returns query_string fragment
-    """
-    assert fuss
-    urls_str = " OR ".join(fuss)
-    return f"url:({urls_str})"
 
 ################################################################
 # here with code dragged up from mediacloud.py and news-search-api/api.py
@@ -518,51 +360,6 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return "canonical_domain"
 
     @classmethod
-    def _selector_query_clauses(cls, kwargs: dict) -> list[str]:
-        """
-        take domains, filters, url_search_strings as kwargs
-        return a list of query_strings to be OR'ed together
-        (to be AND'ed with user query or used as a filter)
-        """
-        cls.trace(Trace.QSTR, "MC._selector_query_clauses IN: %r", kwargs)
-        selector_clauses = super()._selector_query_clauses(kwargs)
-
-        # Here to try to get web-search out of query
-        # formatting biz.  Accepts a Mapping indexed by
-        # domain_string, of lists (or sets!) of search_strings.
-        url_search_strings: UrlSearchStrings = kwargs.get('url_search_strings', {})
-        if url_search_strings:
-            # Unclear if domain field check actually helps at all,
-            # so make it optional for testing.
-            if kwargs.get("url_search_string_domain", True): # TEMP: include canonincal_domain:
-                domain_field = cls.domain_search_string()
-
-                # here with mapping of cdom => iterable[search_string]
-                for cdom, search_strings in url_search_strings.items():
-                    fuss: List[str] = [] # formatted url_search_strings
-                    for sstr in search_strings:
-                        format_and_append_uss(sstr, fuss)
-
-                    mfuss = match_formatted_search_strings(fuss)
-                    selector_clauses.append(
-                        f"({domain_field}:{cdom} AND {mfuss})")
-
-                    format_and_append_uss(cdom, fuss)
-            else: # make query without domain (name) field check
-                # collect all the URL search strings
-                fuss = []
-                for cdom, search_strings in url_search_strings.items():
-                    for sstr in search_strings:
-                        format_and_append_uss(sstr, fuss)
-
-                # check all the urls in one swell foop!
-                selector_clauses.append(
-                        match_formatted_search_strings(fuss))
-
-        cls.trace(Trace.QSTR, "MC._selector_query_clauses OUT: %s", selector_clauses)
-        return selector_clauses
-
-    @classmethod
     def _selector_count(cls, kwargs: dict) -> int:
         url_search_strings: UrlSearchStrings = kwargs.get('url_search_strings', {})
         count = super()._selector_count(kwargs)
@@ -649,15 +446,6 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         self.trace(Trace.RESULTS, "MC.sources %r", items)
         return items
 
-    @classmethod
-    def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs: Any) -> list[str]:
-        """
-        Called by OnlineNewsAbstractProvider.all_items, .words;
-        ignores chunking!
-        """
-        cls.trace(Trace.QSTR, "MC._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
-        return [cls._assembled_query_str(base_query, **kwargs)]
-
     def _fields(self, expanded: bool) -> ES_Fieldnames:
         """
         originally in news-search-api/client.py QueryBuilder constructor:
@@ -683,39 +471,10 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     DAY_WEIGHT = 1
 
     @classmethod
-    def _old_selector_filter_tuple(cls, kwargs: dict) -> FilterTuple:
-        """
-        TEMPORARY: old version constructing query string for domains
-        function to allow construction of DSL
-        """
-
-        # rather than restorting to formatting/quoting query-string
-        # only to have ES have to parse it:
-        # For canonical_domain: "Match" query defaults to OR for space separated words
-        # For url: use "Wildcard"??
-        # Should initially take (another) temp kwarg bool to allow A/B testing!!!
-        # elasticsearch_dsl allows "Query | Query"
-
-        selector_clauses = cls._selector_query_clauses(kwargs)
-        if selector_clauses:
-            sqs = cls._selector_query_string_from_clauses(selector_clauses)
-            return FilterTuple(cls._selector_count(kwargs) * cls.SELECTOR_WEIGHT,
-                               SanitizedQueryString(query=sqs,
-                                                    allow_leading_wildcard=True))
-        else:
-            # return dummy record, will be weeded out
-            return FilterTuple(0, None)
-
-    @classmethod
     def _selector_filter_tuple(cls, kwargs: dict) -> FilterTuple:
         """
         function to allow construction of DSL
         """
-
-        if kwargs.get("query_string_filter", False):
-            # escape hatch to query string based source filter
-            return cls._old_selector_filter_tuple(kwargs)
-
         selectors: list[Query] = []
         domains = kwargs.get("domains", [])
         for domain in domains:
