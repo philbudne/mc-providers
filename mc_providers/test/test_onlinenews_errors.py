@@ -1,6 +1,6 @@
 """
 tests for OnlineNewsMediaCloudProvider._check_response
-which interprets elasticsearch.dsl Response objects
+which interprets elasticsearch_dsl Response objects
 
 and tests for OnlineNewsMediaCloudProvider._parse_exception
 which handles ES query parser errors
@@ -14,7 +14,7 @@ These tests are DEFINITELY too strict/rigid but they're a starting place!
 
 import logging
 
-from elasticsearch.dsl.response import Response
+from elasticsearch_dsl.response import Response
 
 from mc_providers.exceptions import MysteryProviderException, PermanentProviderException, TemporaryProviderException, ProviderParseException
 from mc_providers.onlinenews import OnlineNewsMediaCloudProvider

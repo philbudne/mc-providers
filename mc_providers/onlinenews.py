@@ -254,15 +254,15 @@ from enum import Enum
 from typing import TypeAlias, cast
 
 import elasticsearch
-from elasticsearch.dsl import Search, Response
-from elasticsearch.dsl.aggs import A
-from elasticsearch.dsl.document_base import InstrumentedField
-from elasticsearch.dsl.function import RandomScore
-from elasticsearch.dsl.query import (
+from elasticsearch_dsl import Search, Response
+from elasticsearch_dsl.aggs import A
+from elasticsearch_dsl.document_base import InstrumentedField
+from elasticsearch_dsl.function import RandomScore
+from elasticsearch_dsl.query import (
     Bool, FunctionScore, Match, Wildcard, Range, Query, QueryString
 )
-from elasticsearch.dsl.response import Hit
-from elasticsearch.dsl.utils import AttrDict
+from elasticsearch_dsl.response import Hit
+from elasticsearch_dsl.utils import AttrDict
 
 from .exceptions import MysteryProviderException, ProviderParseException, PermanentProviderException, TemporaryProviderException
 
@@ -299,7 +299,7 @@ _DEF_SORT_ORDER = "desc"
 # HOWEVER: use of session_id/preference should route all requests
 # from the same session to the same shards for each successive query,
 # so (to quote HHGttG) "mostly harmless"?
-_SECONDARY_SORT_ARGS = {"_doc": {"order": "asc"}}
+_SECONDARY_SORT_ARGS = {"_doc": "asc"}
 
 class SanitizedQueryString(QueryString):
     """
@@ -694,7 +694,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         # For canonical_domain: "Match" query defaults to OR for space separated words
         # For url: use "Wildcard"??
         # Should initially take (another) temp kwarg bool to allow A/B testing!!!
-        # elasticsearch.dsl allows "Query | Query"
+        # elasticsearch_dsl allows "Query | Query"
 
         selector_clauses = cls._selector_query_clauses(kwargs)
         if selector_clauses:
@@ -757,7 +757,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                       **kwargs: Any) -> Search:
         """
         from news-search-api/api.py cs_basic_query
-        create a elasticsearch.dsl query from user_query, date range, and kwargs
+        create a elasticsearch_dsl query from user_query, date range, and kwargs
 
         Default ES fuzziness is "AUTO":
         https://www.elastic.co/docs/reference/elasticsearch/rest-apis/common-options#fuzziness
@@ -1238,10 +1238,10 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         if randomize:
             search = search\
                 .query(FunctionScore(functions=[RandomScore(seed=seed, field="_seq_no")]))\
-                .sort({"_score": {"order": "desc"}}, _SECONDARY_SORT_ARGS)
+                .sort({"_score": "desc"}, _SECONDARY_SORT_ARGS)
         else:
             # see discussion above at _SECONDARY_SORT_ARGS declaration
-            search = search.sort(*[{sort_field: {"order": sort_order}}, _SECONDARY_SORT_ARGS])
+            search = search.sort(*[{sort_field: sort_order}, _SECONDARY_SORT_ARGS])
 
         if after is not None:
             search = search.extra(search_after=after)
