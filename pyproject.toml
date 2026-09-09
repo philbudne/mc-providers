@@ -31,7 +31,8 @@ dependencies = [
     "requests",
     "fasttext == 0.9.*",
     "mediacloud-metadata >= 1.4.3",
-    "elasticsearch == 8.19.*", # keep in sync w/ ES major version? (elasticsearch-dsl now part of this)
+    "elasticsearch == 8.17.*", # keep in sync w/ ES minor version!
+    "elasticsearch-dsl == 8.17.*", # keep in sync w/ ES minor version!
     "sigfig == 1.3.*",
     "spacy == 3.8.*",  # heavyweight dependency, but used for removing stopwords
     "statsd_client == 1.0.*",
