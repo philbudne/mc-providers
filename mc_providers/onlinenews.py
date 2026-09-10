@@ -299,7 +299,7 @@ _DEF_SORT_ORDER = "desc"
 # HOWEVER: use of session_id/preference should route all requests
 # from the same session to the same shards for each successive query,
 # so (to quote HHGttG) "mostly harmless"?
-_SECONDARY_SORT_ARGS = {"_doc": "asc"}
+_SECONDARY_SORT_ARGS = {"_doc": {"order": "asc"}}
 
 class SanitizedQueryString(QueryString):
     """
@@ -1238,7 +1238,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         if randomize:
             search = search\
                 .query(FunctionScore(functions=[RandomScore(seed=seed, field="_seq_no")]))\
-                .sort({"_score": "desc"}, _SECONDARY_SORT_ARGS)
+                .sort({"_score": {"order": "desc"}}, _SECONDARY_SORT_ARGS)
         else:
             # see discussion above at _SECONDARY_SORT_ARGS declaration
             search = search.sort(*[{sort_field: sort_order}, _SECONDARY_SORT_ARGS])
