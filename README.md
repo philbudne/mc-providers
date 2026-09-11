@@ -20,6 +20,8 @@ Requires environment variables set for various interfaces to work correctly.
    (automatically adds a vM.m.latest tag, used by mediacloud/web-search!!)
 
 ### Version History
+* __v5.0.0__ - Update dependencies, py3.13 compatability, remove now-unused WaybackMachine support
+
 * __v4.5.0__ - Add support for paging through randomized MC results (don't go many pages deep!) 
 * __v4.4.2__ - Move mediacloud dependency to test (it isn't used in main code)
 * __v4.4.1__ - Tweak dependencies for downstream compatibility (failed automated release)
