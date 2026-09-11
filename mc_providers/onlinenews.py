@@ -6,7 +6,6 @@ from typing import Any, List, Mapping, NamedTuple, Optional, TypeAlias, TypedDic
 
 # PyPI
 import ciso8601
-import numpy as np              # for chunking
 
 from .provider import (
     AllItems, ContentProvider, CountOverTime, Date,
@@ -480,6 +479,12 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         for domain in domains:
             selectors.append(Match(canonical_domain=domain))
 
+        # Currently (11/2024) url_search_strings MUST start with fully
+        # qualified domain name (FQDN) without scheme or leading
+        # slashes, and MUST end with a *!  canonical_domain mapping
+        # was made a wildcard field when data was migrated to the
+        # "newsscribe" cluster (c. 2025), which _might_ make leading
+        # wildcards more palatable.
         uss = kwargs.get("url_search_strings", {})
         for domain, strings in uss.items():
             wildcards: list[Query] = []
