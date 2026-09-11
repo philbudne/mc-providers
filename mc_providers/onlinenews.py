@@ -2,14 +2,14 @@ import datetime as dt
 import logging
 import random
 from collections import Counter
-from typing import Any, List, Mapping, NamedTuple, Optional, TypeAlias, TypedDict
+from typing import Any, Callable, List, Mapping, NamedTuple, Optional, TypeAlias, TypedDict
 
 # PyPI
 import ciso8601
 
 from .provider import (
     AllItems, ContentProvider, CountOverTime, Date,
-    Item, Language, Source, Trace, LANGUAGES_LIMIT, SOURCES_LIMIT
+    Item, Items, Language, Source, Trace, LANGUAGES_LIMIT, SOURCES_LIMIT
 )
 from .cache import CachingManager
 
@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 Counts: TypeAlias = dict[str, int]         # key: count
 UrlSearchStrings: TypeAlias = Mapping[str, set[str]] # want Countable[str]
+KwArgs: TypeAlias = dict[str, Any]         # from **kwargs
 
 class Overview(TypedDict):
     query: str
@@ -48,7 +49,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         return '*'
 
     @staticmethod
-    def _prune_kwargs(kwargs: dict[str, Any]) -> None:
+    def _prune_kwargs(kwargs: KwArgs) -> None:
         """
         takes a query **kwargs dict and removes keys that
         are processed in this library, and should not be passed to clients.
@@ -61,7 +62,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         kwargs.pop("query_string_filter", None)      # bool: TEMP
 
     @classmethod
-    def _check_kwargs(cls, kwargs: dict[str, Any]) -> None:
+    def _check_kwargs(cls, kwargs: KwArgs) -> None:
         """
         check for unknown/misspelled kwargs
 
@@ -77,7 +78,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
             raise TypeError(f"unknown keyword args: {exstring}")
 
     @classmethod
-    def _selector_count(cls, kwargs: dict) -> int:
+    def _selector_count(cls, kwargs: dict[str, Any]) -> int:
         return len(kwargs.get('domains', [])) + len(kwargs.get('filters', []))
 
     def __repr__(self) -> str:
@@ -112,6 +113,19 @@ from .provider import (TwoDimensionalCounts, TwoDAggInterval)
 
 ES_Fieldname: TypeAlias = str | InstrumentedField # quiet mypy complaints
 ES_Fieldnames: TypeAlias = list[ES_Fieldname]
+
+class _ESAggStrItem(TypedDict):  # from ES for string fields (lang, domain)
+    doc_count: int
+    key: str
+
+ES_AggStr: TypeAlias = list[_ESAggStrItem]
+
+class _ESAggDateItem(TypedDict): # from ES for date fields
+    doc_count: int
+    key: int                # ns?
+    key_as_string: str
+
+ES_AggDate: TypeAlias = list[_ESAggDateItem]
 
 class FilterTuple(NamedTuple):
     weighted: int               # apply smaller values (result sets) first
@@ -203,18 +217,18 @@ class _ES_Date(_ES_Field):
     def convert(self, datum: Any) -> Any:
         return dt.date.fromisoformat(datum[:10])
 
-def _format_day_counts(bucket: list) -> Counts:
+def _format_day_counts(bucket: ES_AggDate) -> Counts:
     """
     from news-search-api/client.py EsClientWrapper.format_count
 
     used to format "dailycounts" aggregation result
 
-    takes [{"key_as_string": "YYYY-MM-DDT00:00:00.000Z", "doc_count": count}, ....]
+    takes [{"key_as_string": "YYYY-MM-DDT00:00:00.000Z", "key": ns, "doc_count": count}, ....]
     and returns {"YYYY-MM-DD": count, ....}
     """
     return {item["key_as_string"][:10]: item["doc_count"] for item in bucket}
 
-def _format_counts(bucket: list) -> Counts:
+def _format_counts(bucket: ES_AggStr) -> Counts:
     """
     from news-search-api/client.py EsClientWrapper.format_count
 
@@ -359,7 +373,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return "canonical_domain"
 
     @classmethod
-    def _selector_count(cls, kwargs: dict) -> int:
+    def _selector_count(cls, kwargs: dict[str, Any]) -> int:
         url_search_strings: UrlSearchStrings = kwargs.get('url_search_strings', {})
         count = super()._selector_count(kwargs)
         if url_search_strings:
@@ -470,7 +484,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     DAY_WEIGHT = 1
 
     @classmethod
-    def _selector_filter_tuple(cls, kwargs: dict) -> FilterTuple:
+    def _selector_filter_tuple(cls, kwargs: KwArgs) -> FilterTuple:
         """
         function to allow construction of DSL
         """
@@ -759,7 +773,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         res = self._search(search, op)
         return res.hits
 
-    def _process_profile_data(self, pdata: AttrDict) -> None:
+    # AttrDict type is from elasticsearch_dsl.utils
+    def _process_profile_data(self, pdata: AttrDict) -> None: # type: ignore[type-arg]
         """
         digest profiling data
         """
@@ -936,7 +951,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             start_date: dt.datetime, end_date: dt.datetime,
             page_size: int = 1000,
             **kwargs: Any
-    ) -> tuple[list[dict], Optional[str]]:
+    ) -> tuple[Items, Optional[str]]:
         """
         return a single page of data (with `page_size` items).
         Pass `None` as first `pagination_token`, after that pass
@@ -968,7 +983,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         # Decode token; a 3-part token signals randomized pagination (seed is last).
         # important to use `search_after` instead of 'from' for memory reasons
         # related to paging through more than 10k results.
-        after: list | None = None
+        after: list[Any] | None = None
         seed: int | None = None
         if pagination_token:
             parts = _b64_decode_page_token(pagination_token).split(_SORT_KEY_SEP)
@@ -1163,6 +1178,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         # convert external bucket names to ES internal field name
         internal_inner_field = self._ES_FIELDS[inner_field].es_field_name
         internal_outer_field = self._ES_FIELDS[outer_field].es_field_name
+
+        outer_key: Callable[[dict[str, Any]], str]
 
         if outer_field.endswith("_date"): # need better test?
             assert interval is not None
