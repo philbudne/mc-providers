@@ -26,7 +26,7 @@ classifiers = [
 ]
 dependencies = [
     "python-dateutil == 2.*",
-    "ciso8601 == 2.3.*",  # dependency of wayback-news-search, so let it decide which versin is best
+    "ciso8601 == 2.3.*",  # only MC project using it? from WBM code copying?
     "dateparser",
     "requests",
     "fasttext == 0.9.*",
