@@ -643,6 +643,7 @@ class ContentProvider(ABC):
             # 3. Look for class member named "variable", if it exists, return value
             val = getattr(self, variable)
             self.trace(Trace.ARGS, "%r class default %s '%s'", self, variable, val)
+            assert isinstance(val, str)
             return val
         except AttributeError:
             pass
@@ -676,6 +677,7 @@ class ContentProvider(ABC):
             # 3. Look for class member named "variable", if it exists, return value
             val = getattr(self, variable)
             self.trace(Trace.ARGS, "%r class default %s %d", self, variable, val)
+            assert isinstance(val, int)
             return val
         except AttributeError:
             pass
