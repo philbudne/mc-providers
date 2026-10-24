@@ -332,25 +332,26 @@ class ContentProvider(ABC):
     def everything_query(self) -> str:
         raise QueryingEverythingUnsupportedQuery()
 
-    def _collect_random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
-                               samples: int, fields: list[str], **kwargs: Any) -> Items:
+    def _random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
+                       samples: int, **kwargs: Any) -> Items:
         """
-        collect `samples` random items with `fields` using random_sample.
-        MAYBE enforce max samples based on number of fields 10000//len(fields)?
+        helper to collect `samples` random items (from one result page)
+        for generic versions of sample, languages, words
         """
-        results: Items = []
-        limit = samples
-        for page in self.random_sample(query, start_date, end_date, limit, fields, **kwargs):
-            results.extend(page)
-            limit = samples - len(results)
-            if limit <= 0:
-                break
-        return results
+        items, page_token = self.paged_items(query, start_date, end_date, page_size=samples,
+                                             randomize=True, **kwargs)
+        return items
 
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = SAMPLE_LIMIT,
                **kwargs: Any) -> Items:
-        return self._collect_random_sample(query, start_date, end_date, samples=limit,
-                                           fields=self.fields(), **kwargs)
+        """
+        supports mcweb search/sample endpoint.
+        used for search example results.
+        available as mediacloud.api story_sample method.
+
+        can now be passed `fields`
+        """
+        return self._random_sample(query, start_date, end_date, samples=limit, **kwargs)
 
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
         raise NotImplementedError("Doesn't support counts over time.")
@@ -364,9 +365,25 @@ class ContentProvider(ABC):
 
     def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000,
                   **kwargs: Any) -> AllItems:
+        """
+        returns generator of pages (lists) of items.
+        used by web-search csv generator
+        """
+        next_page_token: str | None = None
+        while True:
+            page, next_page_token = self.paged_items(
+                query, start_date, end_date,
+                page_size=page_size,
+                pagination_token=next_page_token,
+                **kwargs)
 
-        # yields a page of items
-        raise NotImplementedError("Doesn't support fetching all matching content.")
+            if not page:
+                break
+
+            yield page
+
+            if not next_page_token:
+                break
 
     def paged_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000,
                     **kwargs: Any) -> tuple[Items, str | None]:
@@ -433,15 +450,15 @@ class ContentProvider(ABC):
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = LANGUAGES_LIMIT,
                                **kwargs: Any) -> list[Language]:
         """
-        generic version of languages, using _collect_random_sample
+        generic version of languages (not used for Media Cloud provider)
         """
         # support sample_size kwarg
         sample_size = kwargs.get('sample_size', self.LANGUAGE_SAMPLE)
 
         # grab a sample
-        sample = self._collect_random_sample(query, start_date, end_date,
-                                             samples=sample_size,
-                                             fields=["language"], **kwargs)
+        sample = self._random_sample(query, start_date, end_date,
+                                     samples=sample_size,
+                                     fields=["language"], **kwargs)
         sampled_count = len(sample)
 
         # get counts
@@ -459,7 +476,7 @@ class ContentProvider(ABC):
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = WORDS_LIMIT,
               **kwargs: Any) -> Terms:
         """
-        generic version of "top words" using _collect_random_sample
+        generic version of "top words"
         """
         # support sample_size kwarg
         sample_size = kwargs.pop('sample_size', self.WORDS_SAMPLE)
@@ -468,10 +485,10 @@ class ContentProvider(ABC):
         # (spacy tokenizer has high startup cost)
         titles: dict[str, list[str]] = collections.defaultdict(list)
         title_count = 0
-        for story in self._collect_random_sample(query, start_date, end_date, samples=sample_size,
-                                                 fields=["title", "language"], **kwargs):
-            if "title" in story:
-                titles[story.get("language", 'UNK')].append(story["title"])
+        for story in self._random_sample(query, start_date, end_date, samples=sample_size,
+                                         fields=["title", "language"], **kwargs):
+            if (title := story.get("title")):
+                titles[story.get("language", 'UNK')].append(title)
                 title_count += 1
 
         # now tokenize by language, removing stopwords and tally by term & document

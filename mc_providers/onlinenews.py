@@ -8,8 +8,8 @@ from typing import Any, Callable, List, Mapping, NamedTuple, Optional, TypeAlias
 import ciso8601
 
 from .provider import (
-    AllItems, ContentProvider, CountOverTime, Date,
-    Item, Items, Language, Source, Trace, LANGUAGES_LIMIT, SOURCES_LIMIT
+    ContentProvider, CountOverTime, Date, Item,
+    Items, Language, Source, Trace, LANGUAGES_LIMIT, SOURCES_LIMIT
 )
 from .cache import CachingManager
 
@@ -56,7 +56,6 @@ class OnlineNewsAbstractProvider(ContentProvider):
         """
         kwargs.pop("chunk", None) # bool
         kwargs.pop("domains", None) # Iterable[str]
-        kwargs.pop("filters", None) # Iterable[str]
         kwargs.pop("url_search_strings", None) # dict[str, Iterable[str]]
         kwargs.pop("url_search_string_domain", None) # bool: TEMP
         kwargs.pop("query_string_filter", None)      # bool: TEMP
@@ -79,7 +78,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
     @classmethod
     def _selector_count(cls, kwargs: dict[str, Any]) -> int:
-        return len(kwargs.get('domains', [])) + len(kwargs.get('filters', []))
+        return len(kwargs.get('domains', []))
 
     def __repr__(self) -> str:
         # important to keep this unique among platforms so that the caching works right
@@ -534,6 +533,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     def _basic_search(self, user_query: str, start_date: dt.datetime, end_date: dt.datetime,
                       expanded: bool = False, source: bool = True,
                       indexed_date: bool = False, fuzziness: int | str = 0,
+                      fields: list[str] = [],
                       **kwargs: Any) -> Search:
         """
         from news-search-api/api.py cs_basic_query
@@ -541,6 +541,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
         Default ES fuzziness is "AUTO":
         https://www.elastic.co/docs/reference/elasticsearch/rest-apis/common-options#fuzziness
+
+        fields is list of external fieldnames to return, if source=True (overrides expanded)
         """
         # works for date or datetime! publication_date is just YYYY-MM-DD
         start = start_date.strftime("%Y-%m-%d")
@@ -604,7 +606,16 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                 s = s.filter(ft.query)
 
         if source:              # return source (fields)?
-            return s.source(self._fields(expanded))
+            if fields:
+                # convert requested external field names to ES field names to request
+                es_fields: ES_Fieldnames = [
+                    self._ES_FIELDS[f].es_field_name
+                    for f in fields
+                    if not self._ES_FIELDS[f].metadata # no need to ask for metadata
+                ]
+            else:
+                es_fields = self._fields(expanded)
+            return s.source(es_fields)
         else:
             return s.source(False) # no source fields in hits
 
@@ -970,17 +981,28 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         request (O(N) per page where N = matching doc count).  Keep the number of
         pages fetched small and prefer large page_size values.
         """
-        logger.debug("MC._paged_items q: %s: %s e: %s ps: %d",
-                     query, start_date, end_date, page_size)
-        self.trace(Trace.QSTR, "MC._paged_items kw: %r", kwargs)
+        logger.debug("MC._paged_items q: %s: s: %s e: %s ps: %d kw: %r",
+                     query, start_date, end_date, page_size, kwargs)
 
-        page_size = min(page_size, _ES_MAXPAGE)
         expanded = kwargs.pop("expanded", False)
         sort_field = kwargs.pop("sort_field", _DEF_SORT_FIELD)
         sort_order = kwargs.pop("sort_order", _DEF_SORT_ORDER)
         pagination_token = kwargs.pop("pagination_token", None)
         randomize = kwargs.pop("randomize", False)
         seed_arg = kwargs.pop("seed", None)
+        fields = kwargs.pop("fields", []) # external names
+
+        if fields:
+            # allow fetching more items with fewer fields to allow words()
+            # to look at more documents while fetching a single page.
+            # web-search doesn't (currently) allow changing the field list.
+            max_page = 10000 // len(fields)
+        else:
+            # web-search does not currently limit page size (passed in by client)!
+            max_page = _ES_MAXPAGE
+            fields = self.fields(expanded)
+        page_size = min(page_size, max_page)
+        logger.debug("MC._paged_items max_page: %d, final page_size: %d", max_page, page_size)
 
         # Decode token; a 3-part token signals randomized pagination (seed is last).
         # important to use `search_after` instead of 'from' for memory reasons
@@ -1013,7 +1035,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             if sort_order not in ["asc", "desc"]:
                 raise ValueError(sort_order)
 
-        search = self._basic_search(query, start_date, end_date, expanded=expanded, **kwargs)\
+        search = self._basic_search(query, start_date, end_date, fields=fields, **kwargs)\
                      .extra(size=page_size)
 
         if randomize:
@@ -1029,6 +1051,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
         hits = self._search_hits(search, "paged-items")
         if not hits:
+            logger.debug("MC._paged_items no hits")
             return ([], None)
 
         new_pt: str | None = None
@@ -1050,32 +1073,10 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             new_pt = _b64_encode_page_token(
                 _SORT_KEY_SEP.join([str(key) for key in sort_key_vals]))
 
-        fields = self.fields(expanded)
         rows = [self._hit_to_row(h, fields, True) for h in hits]
+        logger.debug("MC._paged_items returning %d rows", len(rows))
         self.trace(Trace.RESULTS, "MC next %s rows %r", new_pt, rows)
         return (rows, new_pt)
-
-    def all_items(self, query: str,
-                  start_date: dt.datetime, end_date: dt.datetime,
-                  page_size: int = _ES_MAXPAGE, **kwargs: Any) -> AllItems:
-        """
-        returns generator of pages (lists) of items
-        """
-        next_page_token: str | None = None
-        while True:
-            page, next_page_token = self.paged_items(
-                query, start_date, end_date,
-                page_size=page_size,
-                pagination_token=next_page_token,
-                **kwargs)
-
-            if not page:
-                break
-
-            yield page
-
-            if not next_page_token:
-                break
 
     @classmethod
     def _hit_to_row(cls, hit: Hit, fields: list[str], return_none: bool = False) -> dict[str, Any]:
@@ -1095,39 +1096,6 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                     res[field] = None
         return res
 
-
-    def _safe_max_random_sample_page_size(self, page_size: int, field_count: int) -> int:
-        # max controlled by index-level index.max_result_window, default is 10K.
-        # allows 5K samples for lang/title pairs (for top words):
-        max_page = 10000 // field_count
-        return min(page_size, max_page)
-
-    def random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
-                      page_size: int, fields: list[str], **kwargs: Any) -> AllItems:
-        """
-        Returns a single-page generator of randomly-ordered results.
-        For multi-page random access, call paged_items with randomize=True directly.
-        """
-        if not fields:
-            raise ValueError("random_sample requires fields list")
-
-        page_size = self._safe_max_random_sample_page_size(page_size, len(fields))
-
-        # Use expanded=True if any requested field lives in the expanded set
-        expanded = any(
-            self._ES_FIELDS[f].include == Include.EXPANDED
-            for f in fields if f in self._ES_FIELDS
-        )
-
-        page, _ = self.paged_items(
-            query, start_date, end_date,
-            page_size=page_size,
-            expanded=expanded,
-            randomize=True,
-            **kwargs
-        )
-        if page:
-            yield [{k: row[k] for k in fields if row.get(k) is not None} for row in page]
 
     @classmethod
     def fields(cls, expanded: bool = False) -> list[str]:
