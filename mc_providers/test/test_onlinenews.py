@@ -95,6 +95,18 @@ class OnlineNewsMediaCloudProviderTest(unittest.TestCase):
             assert len(r['title']) > 0
             assert 'publish_date' in r
 
+    def test_sample_fields(self):
+        results = self._provider.sample("fluff", dt.datetime(2023, 3, 1), dt.datetime(2023, 4, 1),
+                                        fields=["title", "language"])
+        assert len(results) > 0
+        for r in results:
+            assert 'language' in r
+            assert 'media_name' not in r
+            assert 'media_url' not in r
+            assert 'title' in r
+            assert len(r['title']) > 0
+            assert 'publish_date' not in r
+
     def test_all_items(self):
         # make sure overall count matches number of stories found via paging
         query = "trump"
@@ -392,13 +404,14 @@ class OnlineNewsMediaCloudProviderTest(unittest.TestCase):
         page1, _ = self._provider.paged_items(query, start_date, end_date, domains=domains, page_size=1)
 
     def _collect_random_results(self, query, fields, page_size, start, end):
+        """
+        removed random_sample method returned a single page
+        """
         start_date = start or dt.datetime(2023, 1, 1)
         end_date = end or dt.datetime(2023, 12, 31)
-        results = []
-        # currently returns only one page, but be prepared!
-        for page in self._provider.random_sample(query, start_date, end_date,
-                                                 page_size=page_size, fields=fields):
-            results.extend(page)
+        results, _ = self._provider.paged_items(query, start_date, end_date,
+                                                page_size=page_size, fields=fields,
+                                                randomize=True)
         return results
 
     # id requires special handling; test for no duplicates
