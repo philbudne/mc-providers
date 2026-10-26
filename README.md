@@ -3,7 +3,7 @@ Media Cloud Providers Library
 
 A package of search providers for Media Cloud. This used to support many different types of data sources
 for fetching content, but not is primarily an internal library for accessing the Media Cloud Online News
-Archive (ElasticSearch index). Accordingly, eeleases > 4.0.0 are all be shared exclusively on github, and 
+Archive (ElasticSearch index). Accordingly, releases > 4.0.0 are all be shared exclusively on github, and
 this project was delisted from pypi around April 2025.
 
 Install with pip (`pip install .`) and the `install.sh` script. 
@@ -20,6 +20,7 @@ Requires environment variables set for various interfaces to work correctly.
    (automatically adds a vM.m.latest tag, used by mediacloud/web-search!!)
 
 ### Version History
+* __v5.1.0__ - Add fields arguments to paged_items, sample; words samples 5K stories again. Removed wayback stubs. all_items is now generic.  Removed random_sample method.
 * __v5.0.0__ - Update dependencies, py3.13 compatability, remove now-unused WaybackMachine support
 
 * __v4.5.0__ - Add support for paging through randomized MC results (don't go many pages deep!) 
