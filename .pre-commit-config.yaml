@@ -3,6 +3,15 @@
 # See https://pre-commit.com for more information
 # See https://pre-commit.com/hooks.html for more hooks
 repos:
+  # re-resolve X.Y.latest tags to git hashes, refresh .venv
+  - repo: local
+    hooks:
+      - id: relock/install
+        name: make relock install
+        entry: make relock install
+        language: system
+        pass_filenames: false
+        always_run: true
   - repo: https://github.com/PyCQA/autoflake
     rev: v2.4.0
     hooks:

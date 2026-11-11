@@ -15,11 +15,10 @@ Requires environment variables set for various interfaces to work correctly.
 1. Bump the version number in `pyproject.toml`
 2. Add a note about changes to the version history below
 3. Commit the changes and tag it with a semantic version number
-4. Push the tag to GitHub
-5. GitHub action will build and push the repository on committing a tagged version
-   (automatically adds a vM.m.latest tag, used by mediacloud/web-search!!)
+4. Run "make release"; will add and push vM.m.latest tag
 
 ### Version History
+* __v5.1.2__ - Use mc-deploy for release (add/push .latest tag)
 * __v5.1.1__ - Add paged-random counter (paged_items is now the only way to get random samples, and was not visible in grafana)
 * __v5.1.0__ - Add fields arguments to paged_items, sample; words samples 5K stories again. Removed wayback stubs. all_items is now generic.  Removed random_sample method.
 * __v5.0.0__ - Update dependencies, py3.13 compatability, remove now-unused WaybackMachine support

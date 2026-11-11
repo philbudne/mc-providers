@@ -6,6 +6,8 @@
 VENVDIR=.venv
 VENVBIN=$(VENVDIR)/bin
 VENVDONE=$(VENVDIR)/.done
+LID_BIN=mc_providers/language/lid.176.bin
+LID_NEW=$(LID_BIN).new
 
 help:
 	@echo Usage:
@@ -17,19 +19,30 @@ help:
 	@echo "make clean -- remove development environment"
 
 ## run pre-commit checks on all files
-lint:	$(VENVDONE)
+lint:	$(VENVDONE) check-lid
 	$(VENVBIN)/pre-commit run --all-files
 
 # create venv with project dependencies
-# --editable skips installing project sources in venv
 # pre-commit is in dev optional-requirements
-install $(VENVDONE): Makefile pyproject.toml uv.lock
-	uv sync --extra dev --extra test --extra mypy
+# mypy run from dev .venv when using uv
+install $(VENVDONE): Makefile pyproject.toml
+	uv sync --extra dev --extra test --extra mypy --extra release
 	$(VENVBIN)/pre-commit install
 	touch $(VENVDONE)
 
-uv.lock: pyproject.toml
-	uv lock
+check-lid:
+	curl -SL https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.bin -o $(LID_NEW)
+	cmp $(LID_NEW) $(LID_BIN) || cp -f $(LID_NEW) $(LID_BIN)
+
+# tag and push (adds .latest tag):
+release: lint
+	$(VENVBIN)/python release.py release
+
+## run by pre-commit:
+## upgrade packages, need explicit --upgrade-package
+## to pick up mediacloud private packages .latest tag changes
+relock uv.lock: pyproject.toml
+	uv lock --upgrade `awk '/git.https:\/\/github.com\/mediacloud\// { print }' pyproject.toml | sed -e 's/^ *"/--upgrade-package /' -e 's/ *@.*//'`
 
 ## update .pre-commit-config.yaml
 update-pre-commit:	$(VENVDONE)
